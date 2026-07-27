@@ -1,0 +1,22 @@
+-- Fix execution_order for all 21 core scripts
+UPDATE scripts SET execution_order = 1  WHERE filename = 'core_dns.sh'              AND is_core = TRUE;
+UPDATE scripts SET execution_order = 2  WHERE filename = 'core_repositories.sh'     AND is_core = TRUE;
+UPDATE scripts SET execution_order = 3  WHERE filename = 'core_packages.sh'         AND is_core = TRUE;
+UPDATE scripts SET execution_order = 4  WHERE filename = 'core_legados.sh'          AND is_core = TRUE;
+UPDATE scripts SET execution_order = 5  WHERE filename = 'core_apps.sh'             AND is_core = TRUE;
+UPDATE scripts SET execution_order = 6  WHERE filename = 'core_domain.sh'           AND is_core = TRUE;
+UPDATE scripts SET execution_order = 7  WHERE filename = 'core_ssh.sh'              AND is_core = TRUE;
+UPDATE scripts SET execution_order = 8  WHERE filename = 'core_browser.sh'          AND is_core = TRUE;
+UPDATE scripts SET execution_order = 9  WHERE filename = 'core_inventory.sh'        AND is_core = TRUE;
+UPDATE scripts SET execution_order = 10 WHERE filename = 'core_printers.sh'         AND is_core = TRUE;
+UPDATE scripts SET execution_order = 11 WHERE filename = 'core_vnc.sh'              AND is_core = TRUE;
+UPDATE scripts SET execution_order = 12 WHERE filename = 'core_conky.sh'            AND is_core = TRUE;
+UPDATE scripts SET execution_order = 13 WHERE filename = 'core_config.sh'           AND is_core = TRUE;
+UPDATE scripts SET execution_order = 14 WHERE filename = 'core_branding.sh'         AND is_core = TRUE;
+UPDATE scripts SET execution_order = 15 WHERE filename = 'core_logon.sh'            AND is_core = TRUE;
+UPDATE scripts SET execution_order = 16 WHERE filename = 'core_logoff.sh'           AND is_core = TRUE;
+UPDATE scripts SET execution_order = 17 WHERE filename = 'core_session_lightdm.sh'  AND is_core = TRUE;
+UPDATE scripts SET execution_order = 18 WHERE filename = 'core_session_gdm3.sh'     AND is_core = TRUE;
+UPDATE scripts SET execution_order = 19 WHERE filename = 'core_session_sddm.sh'     AND is_core = TRUE;
+UPDATE scripts SET execution_order = 20 WHERE filename = 'core_agent.sh'            AND is_core = TRUE;
+UPDATE scripts SET execution_order = 21 WHERE filename = 'core_proxy.sh'            AND is_core = TRUE;
