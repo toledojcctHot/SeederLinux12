@@ -19,14 +19,14 @@ const categoryLabels = {
     'generic': 'Geral', 'custom': 'Custom', 'arquivos': 'Arquivos',
     'acesso_remoto': 'Acesso Remoto', 'impressoras': 'Impressoras',
     'certificados': 'Certificados', 'repositorios': 'Repositorios',
-    'aplicacoes': 'Aplicacoes'
+    'aplicacoes': 'Aplicacoes', 'avancado': 'Avancado'
 };
 
 const categoryOrder = [
     'dominio', 'rede', 'proxy', 'repositorios', 'ambiente', 'navegador',
     'branding', 'assets', 'monitoramento',
     'arquivos', 'impressoras', 'inventario', 'aplicacoes',
-    'acesso_remoto', 'certificados', 'seguranca', 'generic', 'custom'
+    'acesso_remoto', 'certificados', 'seguranca', 'avancado', 'generic', 'custom'
 ];
 
 // Campos dependentes: chave = var pai, valor = lista de vars que aparecem apenas se pai=true
