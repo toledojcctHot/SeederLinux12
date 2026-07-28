@@ -1,4 +1,24 @@
-#!/bin/bash
+/*
+# Fix core_domain.sh - Kerberos interactive kinit + multiple bug fixes
+
+The database version of core_domain.sh had several critical bugs:
+1. REALS="${DOMINIO^}}" - typo, should be REALM="${DOMINIO^^}"
+2. kinit "${ADMIN_USERNAME}@${REALL}" - typo, should use ${REALM}
+3. WINBIND_OFFLINE = "yes" - invalid bash (spaces around =)
+4. kinit used pipe only, which fails on many DCs with
+   "Client's credentials have been revoked"
+5. krb5.conf [realms] section used DOMINIO_NETBIOS instead of REALM
+6. SSSD OFFLINE_CACHE had leading space breaking heredoc
+
+This update replaces the entire script with the corrected version:
+- kinit tries interactive first (user types password), then pipe fallbacks
+- REALM variable properly defined as ${DOMINIO^^}
+- All bash variable assignments use correct syntax (no spaces around =)
+- krb5.conf uses REALM consistently
+- SSSD offline cache properly formatted
+*/
+
+UPDATE scripts SET content = '#!/bin/bash
 # ============================================================================
 # Core Script: core_domain.sh
 # SeederLinux Lite - Ingresso no AD (SSSD/Winbind)
@@ -252,3 +272,4 @@ systemctl enable sssd
 
 echo ">>> [04] Ingresso no AD concluido!"
 echo "============================================================="
+' WHERE filename = 'core_domain.sh';
