@@ -1,4 +1,20 @@
-#!/bin/bash
+/*
+# Fix core_domain.sh - Definitive Kerberos kinit fix
+
+Replaces the entire script content with a new version that:
+1. Tries pipe-based kinit first (4 combinations) if ADMIN_PASSWORD is set
+2. Falls back to interactive kinit loop if pipe fails or no password:
+   - If ADMIN_USERNAME is set, only asks for password (via kinit's own prompt)
+   - If ADMIN_USERNAME is empty/unset, asks for username then password
+   - Loops until ticket obtained or operator gives up
+3. Fixes all previously identified bugs (REALM typo, WINBIND_OFFLINE syntax, etc.)
+
+The cosmetic "DOMINIO_NETBIOS}" issue was already fixed in the previous
+migration - it was caused by the old REALS="${DOMINIO^}}" typo. The current
+content has no standalone DOMINIO_NETBIOS} occurrences (verified).
+*/
+
+UPDATE scripts SET content = '#!/bin/bash
 # ============================================================================
 # Core Script: core_domain.sh
 # SeederLinux Lite - Ingresso no AD (SSSD/Winbind)
@@ -280,3 +296,4 @@ systemctl enable sssd
 
 echo ">>> [04] Ingresso no AD concluido!"
 echo "============================================================="
+' WHERE filename = 'core_domain.sh';
