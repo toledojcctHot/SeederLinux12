@@ -19,14 +19,14 @@ const categoryLabels = {
     'generic': 'Geral', 'custom': 'Custom', 'arquivos': 'Arquivos',
     'acesso_remoto': 'Acesso Remoto', 'impressoras': 'Impressoras',
     'certificados': 'Certificados', 'repositorios': 'Repositorios',
-    'aplicacoes': 'Aplicacoes', 'avancado': 'Avancado'
+    'aplicacoes': 'Aplicacoes', 'avancado': 'Avancado', 'agente': 'Agente'
 };
 
 const categoryOrder = [
     'dominio', 'rede', 'proxy', 'repositorios', 'ambiente', 'navegador',
     'branding', 'assets', 'monitoramento',
     'arquivos', 'impressoras', 'inventario', 'aplicacoes',
-    'acesso_remoto', 'certificados', 'seguranca', 'avancado', 'generic', 'custom'
+    'acesso_remoto', 'certificados', 'seguranca', 'avancado', 'agente', 'generic', 'custom'
 ];
 
 // Campos dependentes: chave = var pai, valor = lista de vars que aparecem apenas se pai=true
@@ -34,7 +34,6 @@ const dependentFields = {
     'VNC_ENABLED': ['VNC_PASSWORD_B64'],
     'INSTALL_DESKTOP': ['DESKTOP_ENV'],
     'INVENTORY_ENABLED': ['OCS_SERVER', 'OCS_TAG', 'GLPI_SERVER'],
-    'CERTIFICATE_AUTO_INSTALL': ['CERTIFICATE_BUNDLE'],
     'OFFLINE_AUTH_ENABLED': ['OFFLINE_AUTH_DAYS']
 };
 
@@ -67,7 +66,10 @@ const variableOptions = {
     'INSTALL_JAVA8': 'boolean',
     'INSTALL_FIREFOX52': 'boolean',
     'INSTALL_DESKTOP': 'boolean',
-    'VNC_ENABLED': 'boolean'
+    'VNC_ENABLED': 'boolean',
+    'REMOVER_LIBREOFFICE': 'boolean',
+    'INSTALL_AGENT': 'boolean',
+    'AGENT_NO_CHECK_CERT': 'boolean'
 };
 
 const conkyPositions = ['top_left', 'top_right', 'top_middle', 'middle_left', 'middle_right', 'bottom_left', 'bottom_right', 'bottom_middle'];
@@ -682,7 +684,7 @@ function renderVariables(vars) {
 
     html += '<div class="var-grid">';
     if (activeCategory === 'Todas') {
-        cats.filter(c => c !== 'repositorios').forEach(c => {
+        cats.filter(c => c !== 'repositorios' && c !== 'oculto').forEach(c => {
             const catVars = nonRepo.filter(v => (v.category || 'generic') === c);
             if (!catVars.length) return;
             html += `<h4 class="col-span-2 mt-4 first:mt-0 text-sm font-semibold text-slate-400 uppercase">${categoryLabels[c] || c}</h4>`;
