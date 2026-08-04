@@ -27,11 +27,16 @@ DOMINIO_NETBIOS="{{DOMINIO_NETBIOS}}"
 GRUPO_ADMIN_AD="{{GRUPO_ADMIN_AD}}"
 
 if [ -z "$DISPLAY_MANAGER" ] || [ "$DISPLAY_MANAGER" = "" ]; then
-    echo ">>> DISPLAY_MANAGER nao configurado. Nenhum DM sera instalado."
-    exit 0
+    # DISPLAY_MANAGER vazio: se LightDM ja estiver instalado, configurar greeter
+    if command -v lightdm &>/dev/null || dpkg -l lightdm 2>/dev/null | grep -q "^ii"; then
+        echo ">>> DISPLAY_MANAGER vazio, mas LightDM ja esta instalado. Configurando greeter."
+    else
+        echo ">>> DISPLAY_MANAGER nao configurado. Nenhum DM sera instalado."
+        exit 0
+    fi
 fi
 
-if [ "$DISPLAY_MANAGER" != "lightdm" ]; then
+if [ "$DISPLAY_MANAGER" != "lightdm" ] && [ "$DISPLAY_MANAGER" != "" ]; then
     echo ">>> DISPLAY_MANAGER e $DISPLAY_MANAGER (nao e lightdm). Pulando."
     exit 0
 fi
@@ -40,11 +45,15 @@ echo ">>> Display Manager: $DISPLAY_MANAGER"
 echo ">>> Ambiente: $DESKTOP_ENV"
 
 # ============================================================
-# Instalar LightDM
+# Instalar LightDM (pular se ja estiver instalado)
 # ============================================================
-echo ">>> Instalando LightDM..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get install -y lightdm lightdm-gtk-greeter
+if ! command -v lightdm &>/dev/null && ! dpkg -l lightdm 2>/dev/null | grep -q "^ii"; then
+    echo ">>> Instalando LightDM..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y lightdm lightdm-gtk-greeter
+else
+    echo ">>> LightDM ja esta instalado. Pulando instalacao."
+fi
 
 # Garantir que o LightDM seja o DM padrao
 echo "lightdm shared/default-x-display-manager select lightdm" | debconf-set-selections 2>/dev/null || true

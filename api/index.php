@@ -862,12 +862,8 @@ function handleGenerateBundle($input) {
 
     foreach ($scripts as $s) {
         $scriptContent = substituir_placeholders($s['content'], $orgId);
-        if ($adminPwdEncoded) {
-            $scriptContent = str_replace('__ADMIN_PASSWORD_B64__', $adminPwdEncoded, $scriptContent);
-        }
-        if ($vncPwdEncoded) {
-            $scriptContent = str_replace('__VNC_PASSWORD_B64__', $vncPwdEncoded, $scriptContent);
-        }
+        $scriptContent = str_replace('__ADMIN_PASSWORD_B64__', $adminPwdEncoded ?: '', $scriptContent);
+        $scriptContent = str_replace('__VNC_PASSWORD_B64__', $vncPwdEncoded ?: '', $scriptContent);
         $bundle .= "# --- {$s['name']} ({$s['filename']}) ---\n";
         $bundle .= $scriptContent . "\n\n";
         $scriptIds[] = $s['id'];

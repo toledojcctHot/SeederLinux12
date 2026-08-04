@@ -1,4 +1,6 @@
-#!/bin/bash
+/* C7: Update core_branding.sh - prefix URLs with SEEDER_SERVER */
+
+UPDATE scripts SET content = '#!/bin/bash
 # ============================================================================
 # Core Script: core_branding.sh
 # SeederLinux Lite - Wallpaper, logo, tema (varia por DE)
@@ -192,15 +194,15 @@ case "$DESKTOP_ENV" in
         mkdir -p /etc/skel/.config
         cat > /etc/skel/.config/cinnamon-settings.conf <<EOF
 [org.cinnamon.desktop.background]
-picture-uri='file:///usr/share/backgrounds/seederlinux/wallpaper.jpg'
-picture-options='zoom'
+picture-uri=''file:///usr/share/backgrounds/seederlinux/wallpaper.jpg''
+picture-options=''zoom''
 
 [org.cinnamon.desktop.interface]
-gtk-theme='${THEME}'
-icon-theme='Adwaita'
+gtk-theme=''${THEME}''
+icon-theme=''Adwaita''
 
 [org.cinnamon.theme]
-name='${THEME}'
+name=''${THEME}''
 EOF
         ;;
 
@@ -209,12 +211,12 @@ EOF
         mkdir -p /etc/skel/.config
         cat > /etc/skel/.config/mate-background.conf <<EOF
 [org.mate.desktop.background]
-picture-filename='/usr/share/backgrounds/seederlinux/wallpaper.jpg'
-picture-options='zoom'
+picture-filename=''/usr/share/backgrounds/seederlinux/wallpaper.jpg''
+picture-options=''zoom''
 
 [org.mate.desktop.interface]
-gtk-theme='${THEME}'
-icon-theme='Adwaita'
+gtk-theme=''${THEME}''
+icon-theme=''Adwaita''
 EOF
         ;;
 
@@ -223,16 +225,16 @@ EOF
         mkdir -p /etc/dconf/db/local.d
         cat > /etc/dconf/db/local.d/seederlinux-branding <<EOF
 [org/gnome/desktop/background]
-picture-uri='file:///usr/share/backgrounds/seederlinux/wallpaper.jpg'
-picture-uri-dark='file:///usr/share/backgrounds/seederlinux/wallpaper.jpg'
-picture-options='zoom'
+picture-uri=''file:///usr/share/backgrounds/seederlinux/wallpaper.jpg''
+picture-uri-dark=''file:///usr/share/backgrounds/seederlinux/wallpaper.jpg''
+picture-options=''zoom''
 
 [org/gnome/desktop/interface]
-gtk-theme='${THEME}'
-icon-theme='Adwaita'
+gtk-theme=''${THEME}''
+icon-theme=''Adwaita''
 
 [org/gnome/login-screen]
-logo='/usr/share/pixmaps/seederlinux-logo.png'
+logo=''/usr/share/pixmaps/seederlinux-logo.png''
 EOF
         dconf update 2>/dev/null || true
         ;;
@@ -309,8 +311,8 @@ EOF
             mkdir -p /etc/dconf/db/gdm.d
             cat > /etc/dconf/db/gdm.d/01-seederlinux-background <<EOF
 [org/gnome/desktop/background]
-picture-uri='file:///usr/share/backgrounds/seederlinux/wallpaper-login.jpg'
-picture-options='zoom'
+picture-uri=''file:///usr/share/backgrounds/seederlinux/wallpaper-login.jpg''
+picture-options=''zoom''
 EOF
             dconf update 2>/dev/null || true
         fi
@@ -329,4 +331,5 @@ EOF
 esac
 
 echo ">>> [13] Identidade visual aplicada!"
-echo "============================================================"
+echo "============================================================="
+' WHERE filename = 'core_branding.sh';

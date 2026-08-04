@@ -203,6 +203,7 @@ domains = ${DOMINIO}
     use_fully_qualified_names = false
     fallback_homedir = /home/%d/%u
     default_shell = /bin/bash
+    krb5_use_fast = false
     ${OFFLINE_CACHE}
     dyndns_update = false
     sudo_provider = ad

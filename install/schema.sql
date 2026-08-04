@@ -90,7 +90,7 @@ INSERT INTO variable_definitions (name, placeholder, description, type, category
 ('DOMINIO_NETBIOS', '{{DOMINIO_NETBIOS}}', 'Nome NetBIOS do dominio', 'netbios', 'dominio', TRUE, 'OM', 2),
 ('DC_IP', '{{DC_IP}}', 'IP do Controlador de Dominio', 'ip', 'dominio', TRUE, '10.0.0.1', 3),
 ('DC_SECUNDARIO_IP', '{{DC_SECUNDARIO_IP}}', 'IP do Controlador de Dominio secundario', 'ip', 'dominio', FALSE, '10.0.0.2', 4),
-('DNS_INTERNET', '{{DNS_INTERNET}}', 'DNS para internet (fallback)', 'ip', 'rede', TRUE, '8.8.8.8', 5),
+('DNS_INTERNET', '{{DNS_INTERNET}}', 'DNS publico para internet (fallback, ex: 8.8.8.8 ou 1.1.1.1). Deve ser um DNS publico, nao o DNS do dominio local.', 'ip', 'rede', TRUE, '8.8.8.8', 5),
 ('DNS_PRIMARIO', '{{DNS_PRIMARIO}}', 'DNS primario para resolucao de nomes', 'ip', 'rede', TRUE, '10.0.0.1', 6),
 ('DNS_SECUNDARIO', '{{DNS_SECUNDARIO}}', 'DNS secundario (fallback)', 'ip', 'rede', FALSE, '10.0.0.2', 7),
 ('NTP_SERVER', '{{NTP_SERVER}}', 'Servidor NTP para sincronizacao de horario', 'ip', 'dominio', FALSE, 'pool.ntp.org', 8),

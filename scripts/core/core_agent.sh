@@ -7,6 +7,7 @@
 # executa o primeiro check-in em background.
 # ============================================================================
 
+(
 set -e
 
 echo "============================================================"
@@ -17,7 +18,7 @@ INSTALL_AGENT="{{INSTALL_AGENT}}"
 if [ "$INSTALL_AGENT" != "true" ]; then
     echo ">>> Instalacao do agente desativada (INSTALL_AGENT=false). Pulando."
     echo "============================================================"
-    return 0
+    exit 0
 fi
 
 SEEDER_SERVER="{{SEEDER_SERVER}}"
@@ -30,12 +31,18 @@ echo ">>> Organizacao: $OM_ACRONYM"
 # Baixar o agente
 mkdir -p /usr/local/bin
 if wget -q -O /usr/local/bin/seeder-agent "${SEEDER_SERVER}/downloads/agent.py"; then
+    # Verificar que o arquivo nao esta vazio
+    if [ ! -s /usr/local/bin/seeder-agent ]; then
+        echo ">>> ERRO: Agente baixado mas arquivo esta vazio. Verifique $SEEDER_SERVER"
+        echo "============================================================"
+        exit 1
+    fi
     chmod 755 /usr/local/bin/seeder-agent
     echo ">>> Agente baixado com sucesso"
 else
     echo ">>> ERRO: Falha ao baixar o agente. Verifique conectividade com $SEEDER_SERVER"
     echo "============================================================"
-    return 1
+    exit 1
 fi
 
 # Criar configuracao
@@ -58,3 +65,4 @@ nohup /usr/local/bin/seeder-agent --org "$OM_ACRONYM" --no-check-certificate > /
 
 echo ">>> [18] Agente instalado e agendado!"
 echo "============================================================"
+)

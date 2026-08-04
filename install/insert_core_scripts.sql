@@ -440,7 +440,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Instalacao de Pacotes',
     'core_packages.sh',
-    'Instala TODOS os pacotes necessarios (sistema, OCS, CUPS, VNC, Conky, Java, etc).',
+    'Instala pacotes base do sistema.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_packages.sh
@@ -738,7 +738,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Suporte a Sistemas Legados',
     'core_legados.sh',
-    'Instala Java 8 e Firefox 52 ESR para compatibilidade com sistemas legados.',
+    'Configura suporte a sistemas legados.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_legados.sh
@@ -944,7 +944,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Instalacao de Aplicacoes Extras',
     'core_apps.sh',
-    'Instala aplicacoes extras (OnlyOffice, Chrome, etc).',
+    'Instala aplicacoes extras.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_apps.sh
@@ -1114,23 +1114,16 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Ingresso em Dominio AD',
     'core_domain.sh',
-    'Ingressa a estacao no Active Directory (SSSD/Winbind com fallback).',
+    'Ingresso no Active Directory via SSSD/Winbind.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_domain.sh
-# SeederLinux Lite - Ingresso no AD (SSSD/Winbind com fallback)
+# SeederLinux Lite - Ingresso no AD (SSSD/Winbind)
 # ============================================================================
 # Configura Kerberos, Samba, SSSD, PAM, NSS, sudo e mkhomedir para
 # ingressar a estacao no dominio Active Directory.
-#
-# Suporta AUTH_METHOD:
-#   sssd    - Apenas SSSD (realm join)
-#   winbind - Apenas Winbind (net ads join)
-#   both    - SSSD primeiro, fallback para Winbind se falhar
-#
-# Suporta ADMIN_PASSWORD_B64 (senha codificada em base64).
-# Os placeholders VARIAVEL sao substituidos automaticamente
-# pelo sistema na geracao do bundle.
+# Os placeholders {{VARIAVEL}} são substituídos automaticamente
+# pelo sistema na geração do bundle.
 # ============================================================================
 
 set -e
@@ -1140,7 +1133,7 @@ echo "04 - Ingresso no Active Directory"
 echo "============================================================"
 
 # ============================================================
-# Variaveis
+# Variáveis
 # ============================================================
 DOMINIO="{{DOMINIO}}"
 DOMINIO_NETBIOS="{{DOMINIO_NETBIOS}}"
@@ -1155,54 +1148,16 @@ OFFLINE_AUTH_ENABLED="{{OFFLINE_AUTH_ENABLED}}"
 OFFLINE_AUTH_DAYS="{{OFFLINE_AUTH_DAYS}}"
 ADMIN_USERNAME="{{ADMIN_USERNAME}}"
 AUTH_METHOD="{{AUTH_METHOD}}"
-ADMIN_PASSWORD_B64="__ADMIN_PASSWORD_B64__"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 
 echo ">>> Dominio: $DOMINIO"
-echo ">>> NetBIOS: $DOMINIO_NETBIOS}"
+echo ">>> NetBIOS: $DOMINIO_NETBIOS"
 echo ">>> DC principal: $DC_IP"
-echo ">>> Metodo de autenticacao: $AUTH_METHOD"
-
-# ============================================================
-# Decodificar senha base64 se fornecida
-# ============================================================
-if [ -n "$ADMIN_PASSWORD_B64" ] && [ "$ADMIN_PASSWORD_B64" != "" ]; then
-    ADMIN_PASSWORD=$(echo "$ADMIN_PASSWORD_B64" | base64 -d 2>/dev/null)
-    if [ -n "$ADMIN_PASSWORD" ]; then
-        echo ">>> Senha do AD decodificada de base64 (${#ADMIN_PASSWORD} caracteres)"
-    else
-        echo ">>> AVISO: Falha ao decodificar ADMIN_PASSWORD_B64 — senha nao decodificada"
-    fi
-fi
-
-# ============================================================
-# Ajustar DNS para ingresso no dominio
-# ============================================================
-echo ">>> Ajustando DNS para ingresso no dominio..."
-
-cp /etc/resolv.conf /etc/resolv.conf.bak.$(date +%Y%m%d%H%M%S) 2>/dev/null || true
-
-cat > /etc/resolv.conf <<EOF
-nameserver $DNS_PRIMARIO
-EOF
-
-if [ -n "$DNS_SECUNDARIO" ] && [ "$DNS_SECUNDARIO" != "" ]; then
-    echo "nameserver $DNS_SECUNDARIO" >> /etc/resolv.conf
-fi
-
-echo "search $DOMINIO" >> /etc/resolv.conf
-
-echo ">>> DNS ajustado para ingresso: $DNS_PRIMARIO"
-
-echo ">>> Verificando resolucao do dominio..."
-if ! host "$DOMINIO" > /dev/null 2>&1; then
-    echo ">>> AVISO: Dominio $DOMINIO nao resolve. Verifique o DNS."
-    echo ">>> Tentando mesmo assim..."
-fi
 
 # ============================================================
 # Definir modo winbind offline logon conforme AUTH_METHOD e OFFLINE_AUTH_ENABLED
 # ============================================================
-if { [ "$AUTH_METHOD" = "winbind" ] || [ "$AUTH_METHOD" = "both" ]; } && [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
+if [ "$AUTH_METHOD" = "winbind" ] && [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
     WINBIND_OFFLINE="yes"
 else
     WINBIND_OFFLINE="false"
@@ -1267,154 +1222,89 @@ EOF
 echo ">>> Samba configurado"
 
 # ============================================================
-# Obter credenciais do administrador do dominio
+# Ingressar no dominio
 # ============================================================
-echo "============================================================"
-echo ">>> INGRESSO NO DOMINIO - CREDENCIAIS NECESSARIAS"
-echo "============================================================"
-
-if [ -z "$ADMIN_USERNAME" ] || [ "$ADMIN_USERNAME" = "Administrator" ]; then
-    read -p ">>> Usuario administrador do dominio [Administrator]: " ADMIN_USER
-    ADMIN_USERNAME="${ADMIN_USER:-Administrator}"
-fi
-
-# Se a senha nao foi decodificada de base64, pedir interativamente
-if [ -z "$ADMIN_PASSWORD" ] || [ "$ADMIN_PASSWORD" = "" ]; then
-    read -s -p ">>> Senha do administrador do dominio: " ADMIN_PASSWORD
-    echo ""
-fi
-
 echo ">>> Ingressando no dominio..."
 
 # ============================================================
-# Obter ticket Kerberos - tentar multiplas combinacoes
+# Obter ticket Kerberos
+# Estrategia:
+# 1. Se ADMIN_PASSWORD estiver definida, tenta pipe com 4 combinacoes
+# 2. Se pipe falhou ou nao havia senha, entra em modo interativo:
+#    - Se ADMIN_USERNAME ja estiver definido, pede apenas a senha
+#    - Se ADMIN_USERNAME estiver vazio, pede usuario e senha
+# 3. Loop ate obter o ticket ou o operador desistir
 # ============================================================
 echo ">>> Obtendo ticket Kerberos..."
 KINIT_OK=false
 
-# Tentativa 1: REALM maiusculo (Administrator@OM.LOCAL)
-echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${DOMINIO^^}" 2>/dev/null && KINIT_OK=true
+# --- Tentativa via pipe (se senha disponivel) ---
+if [ -n "$ADMIN_PASSWORD" ]; then
+    echo ">>> Tentando obter ticket com senha pre-definida..."
+    echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${DOMINIO^^}" 2>/dev/null && KINIT_OK=true
+    [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${DOMINIO_NETBIOS}" 2>/dev/null && KINIT_OK=true
+    [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${DOMINIO^^}" 2>/dev/null && KINIT_OK=true
+    [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${DOMINIO,,}" 2>/dev/null && KINIT_OK=true
+fi
 
-# Tentativa 2: NETBIOS (Administrator@OM)
-[ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${DOMINIO_NETBIOS}" 2>/dev/null && KINIT_OK=true
+# --- Tentativa interativa (se pipe falhou ou nao havia senha) ---
+if [ "$KINIT_OK" != "true" ]; then
+    echo ">>> Nao foi possivel obter ticket automaticamente."
+    echo ">>> Solicitando credenciais interativamente..."
 
-# Tentativa 3: Dominio minusculo (administrator@om.local)
-[ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${DOMINIO,,}" 2>/dev/null && KINIT_OK=true
+    while [ "$KINIT_OK" != "true" ]; do
+        # Se usuario nao estiver definido, pede o usuario
+        if [ -z "$ADMIN_USERNAME" ] || [ "$ADMIN_USERNAME" = "{{ADMIN_USERNAME}}" ]; then
+            read -p ">>> Usuario do dominio: " input_user
+            [ -n "$input_user" ] && ADMIN_USERNAME="$input_user"
+        else
+            echo ">>> Usuario: ${ADMIN_USERNAME}"
+        fi
 
-# Tentativa 4: Usuario minusculo, REALM maiusculo (administrator@OM.LOCAL)
-[ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${DOMINIO^^}" 2>/dev/null && KINIT_OK=true
+        # kinit interativo pede a senha no terminal
+        echo ">>> Tentando kinit para ${ADMIN_USERNAME}@${DOMINIO^^} ..."
+        if kinit "${ADMIN_USERNAME}@${DOMINIO^^}"; then
+            KINIT_OK=true
+        else
+            echo ">>> Falhou. Verifique a senha e conectividade com o DC."
+            read -p ">>> Tentar novamente? (S/n): " try_again
+            if [[ "$try_again" =~ ^[Nn]$ ]]; then
+                break
+            fi
+            # Na proxima tentativa, permite trocar o usuario
+            ADMIN_USERNAME=""
+        fi
+    done
+fi
 
 if [ "$KINIT_OK" != "true" ]; then
-    echo ">>> ERRO: Falha ao obter ticket Kerberos com todas as combinacoes."
-    echo ">>> Verifique usuario/senha e conectividade com o DC."
-    read -p ">>> Deseja continuar mesmo assim? (S/n): " CONTINUE
-    if [[ "$CONTINUE" =~ ^[Nn]$ ]]; then
-        echo ">>> Instalacao abortada pelo usuario."
-        exit 1
-    fi
-    echo ">>> Continuando apesar do erro..."
-else
-    echo ">>> Ticket Kerberos obtido com sucesso!"
+    echo ">>> ERRO: Falha ao obter ticket Kerberos."
+    echo ">>> Verifique as credenciais e conectividade com o DC."
+    exit 1
 fi
+echo ">>> Ticket Kerberos obtido com sucesso!"
 
-# ============================================================
-# Ingressar no dominio - SSSD (realm join) e/ou Winbind (net ads join)
-# ============================================================
-JOIN_OK=false
-JOIN_METHOD=""
-
-# --- Metodo 1: SSSD (realm join) ---
-if [ "$AUTH_METHOD" = "sssd" ] || [ "$AUTH_METHOD" = "both" ]; then
-    echo ">>> Ingressando no dominio via realm join (SSSD)..."
-    if echo "$ADMIN_PASSWORD" | realm join "$DOMINIO" \
-        --user="$ADMIN_USERNAME" \
-        --computer-ou="$OU_PADRAO" \
-        --verbose 2>&1; then
-
-        # Verificar se o keytab foi gerado
-        if [ ! -f /etc/krb5.keytab ]; then
-            echo ">>> Keytab nao encontrado. Tentando gerar com adcli..."
-            echo "$ADMIN_PASSWORD" | adcli join "$DOMINIO" \
-                --login-user="$ADMIN_USERNAME" \
-                --domain-ou="$OU_PADRAO" \
-                --verbose 2>&1 || true
-        fi
-
-        if [ -f /etc/krb5.keytab ]; then
-            JOIN_OK=true
-            JOIN_METHOD="sssd"
-            echo ">>> Ingresso via SSSD (realm join) bem-sucedido!"
-        else
-            echo ">>> AVISO: realm join executado mas keytab nao gerado."
-        fi
-    else
-        echo ">>> AVISO: realm join falhou."
-    fi
-fi
-
-# --- Metodo 2: Winbind (net ads join) - fallback ou metodo principal ---
-if [ "$JOIN_OK" != "true" ]; then
-    if [ "$AUTH_METHOD" = "winbind" ] || [ "$AUTH_METHOD" = "both" ]; then
-        echo ">>> Ingressando no dominio via net ads join (Winbind)..."
-        if echo "$ADMIN_PASSWORD" | net ads join "$DOMINIO" \
-            -U "$ADMIN_USERNAME" \
-            createcomputer="$OU_PADRAO" 2>&1; then
-
-            if [ -f /etc/krb5.keytab ]; then
-                JOIN_OK=true
-                JOIN_METHOD="winbind"
-                echo ">>> Ingresso via Winbind (net ads join) bem-sucedido!"
-            else
-                echo ">>> AVISO: net ads join executado mas keytab nao gerado."
-                # Tentar gerar keytab manualmente
-                net ads keytab create -U "$ADMIN_USERNAME" 2>/dev/null && {
-                    JOIN_OK=true
-                    JOIN_METHOD="winbind"
-                    echo ">>> Keytab gerado manualmente via net ads keytab."
-                } || true
-            fi
-        else
-            echo ">>> AVISO: net ads join falhou."
-        fi
-    fi
-fi
-
-# --- Verificar resultado do ingresso ---
-if [ "$JOIN_OK" = "false" ]; then
-    echo ">>> ERRO: Falha ao ingressar no dominio com todos os metodos."
-    read -p ">>> Deseja continuar mesmo assim? (S/n): " CONTINUE
-    if [[ "$CONTINUE" =~ ^[Nn]$ ]]; then
-        echo ">>> Instalacao abortada pelo usuario."
-        exit 1
-    fi
-    echo ">>> Continuando apesar do erro..."
-fi
-
-# Verificar keytab
-if [ -f /etc/krb5.keytab ]; then
-    echo ">>> Keytab gerado com sucesso."
-    chmod 600 /etc/krb5.keytab
-fi
-
-echo ">>> Metodo de ingresso utilizado: ${JOIN_METHOD:-nenhum}"
-unset ADMIN_PASSWORD
-unset ADMIN_PASSWORD_B64
+# Ingressar com net ads join
+net ads join -U "${ADMIN_USERNAME}@${DOMINIO_NETBIOS}" \
+    createcomputer="${OU_PADRAO}" || {
+    echo ">>> ERRO: Falha ao ingressar no dominio"
+    exit 1
+}
 echo ">>> Ingresso no dominio realizado"
 
 # ============================================================
-# Configurar SSSD (se metodo for sssd ou both)
+# Configurar SSSD
 # ============================================================
-if [ "$JOIN_METHOD" = "sssd" ] || [ "$AUTH_METHOD" = "sssd" ]; then
-    echo ">>> Configurando SSSD..."
-    OFFLINE_CACHE=""
-    if [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
-        DAYS="${OFFLINE_AUTH_DAYS:-3}"
-        OFFLINE_CACHE="cache_credentials = true
+echo ">>> Configurando SSSD..."
+OFFLINE_CACHE=""
+if [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
+    DAYS="${OFFLINE_AUTH_DAYS:-3}"
+    OFFLINE_CACHE="cache_credentials = true
     krb5_store_password_if_offline = true
     offline_credentials_expiration = ${DAYS}"
-    fi
+fi
 
-    cat > /etc/sssd/sssd.conf <<EOF
+cat > /etc/sssd/sssd.conf <<EOF
 [sssd]
 services = nss, pam, sudo
 config_file_version = 2
@@ -1430,37 +1320,21 @@ domains = ${DOMINIO}
     use_fully_qualified_names = false
     fallback_homedir = /home/%d/%u
     default_shell = /bin/bash
+    krb5_use_fast = false
     ${OFFLINE_CACHE}
     dyndns_update = false
     sudo_provider = ad
     ldap_sudo_search_base = OU=sudoers,${OU_PADRAO}
 EOF
 
-    chmod 600 /etc/sssd/sssd.conf
-    echo ">>> SSSD configurado"
-fi
+chmod 600 /etc/sssd/sssd.conf
+echo ">>> SSSD configurado"
 
 # ============================================================
-# Configurar NSS (suporta SSSD e Winbind)
+# Configurar NSS
 # ============================================================
 echo ">>> Configurando NSS..."
-if [ "$JOIN_METHOD" = "winbind" ] || [ "$AUTH_METHOD" = "winbind" ]; then
-    cat > /etc/nsswitch.conf <<EOF
-passwd:     files systemd winbind
-shadow:     files winbind
-group:      files systemd winbind
-gshadow:    files
-
-hosts:      files dns
-
-services:   files
-netgroup:   files
-sudoers:    files
-
-automount:  files
-EOF
-else
-    cat > /etc/nsswitch.conf <<EOF
+cat > /etc/nsswitch.conf <<EOF
 passwd:     files systemd sss
 shadow:     files sss
 group:      files systemd sss
@@ -1474,7 +1348,6 @@ sudoers:    files sss
 
 automount:  files sss
 EOF
-fi
 
 echo ">>> NSS configurado"
 
@@ -1488,11 +1361,6 @@ pam-auth-update --enable mkhomedir --force 2>/dev/null || true
 if [ -f /etc/pam.d/common-session ]; then
     grep -q "pam_mkhomedir" /etc/pam.d/common-session || \
         echo "session required pam_mkhomedir.so skel=/etc/skel umask=0022" >> /etc/pam.d/common-session
-fi
-
-# Configurar Winbind no PAM se necessario
-if [ "$JOIN_METHOD" = "winbind" ] || [ "$AUTH_METHOD" = "winbind" ]; then
-    pam-auth-update --enable winbind 2>/dev/null || true
 fi
 
 echo ">>> PAM configurado"
@@ -1515,12 +1383,7 @@ fi
 chmod 440 "$SUDO_FILE"
 visudo -cf "$SUDO_FILE" || {
     echo ">>> ERRO: sintaxe do sudoers invalida"
-    read -p ">>> Deseja continuar mesmo assim? (S/n): " CONTINUE
-    if [[ "$CONTINUE" =~ ^[Nn]$ ]]; then
-        echo ">>> Instalacao abortada pelo usuario."
-        exit 1
-    fi
-    echo ">>> Continuando apesar do erro..."
+    exit 1
 }
 
 echo ">>> Sudo configurado"
@@ -1530,19 +1393,11 @@ echo ">>> Sudo configurado"
 # ============================================================
 echo ">>> Reiniciando servicos..."
 systemctl restart samba 2>/dev/null || true
-
-if [ "$JOIN_METHOD" = "sssd" ] || [ "$AUTH_METHOD" = "sssd" ]; then
-    systemctl restart sssd 2>/dev/null || true
-    systemctl enable sssd 2>/dev/null || true
-fi
-
-if [ "$JOIN_METHOD" = "winbind" ] || [ "$AUTH_METHOD" = "winbind" ]; then
-    systemctl restart winbind 2>/dev/null || true
-    systemctl enable winbind 2>/dev/null || true
-fi
+systemctl restart sssd
+systemctl enable sssd
 
 echo ">>> [04] Ingresso no AD concluido!"
-echo "============================================================"
+echo "============================================================="
 $SeederScript$,
     TRUE,
     TRUE,
@@ -1565,7 +1420,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Configuracao SSH',
     'core_ssh.sh',
-    'Configura porta SSH e AllowGroups apos ingresso no AD.',
+    'Configura servidor SSH.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_ssh.sh
@@ -1650,7 +1505,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Configuracao de Navegador',
     'core_browser.sh',
-    'Configura Firefox ESR e Chrome (homepage, proxy, bookmarks) via politicas corporativas.',
+    'Configura navegador padrao.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_browser.sh
@@ -1874,7 +1729,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Agente de Inventario OCS',
     'core_inventory.sh',
-    'Configura OCS Inventory Agent (sem apt-get; pacote instalado em core_packages.sh).',
+    'Configura agente OCS Inventory.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_inventory.sh
@@ -2015,7 +1870,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Configuracao de Impressoras',
     'core_printers.sh',
-    'Configura CUPS e impressoras via servidor remoto.',
+    'Configura impressoras.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_printers.sh
@@ -2183,7 +2038,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Configuracao VNC',
     'core_vnc.sh',
-    'Configura x11vnc para acesso remoto assistido.',
+    'Configura acesso VNC.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_vnc.sh
@@ -2192,8 +2047,9 @@ VALUES (
 # Configura o x11vnc para suporte remoto, incluindo servico systemd e
 # senha de acesso. A instalacao de pacotes e feita no core_packages.sh.
 #
-# SEGURANCA: A senha VNC e gravada em /etc/seederlinux/secrets.env
-# (perm 600) e usada diretamente com x11vnc -storepasswd.
+# SEGURANCA: A senha VNC e recebida como VNC_PASSWORD_B64 (base64),
+# decodificada em memoria e usada com x11vnc -storepasswd. Nunca
+# armazenada em texto plano no bundle ou no disco.
 #
 # Os placeholders VARIAVEL sao substituidos automaticamente
 # pelo sistema na geracao do bundle.
@@ -2210,8 +2066,17 @@ echo "============================================================"
 # Variaveis
 # ============================================================
 VNC_ENABLED="{{VNC_ENABLED}}"
-VNC_PASSWORD="{{VNC_PASSWORD}}"
+VNC_PASSWORD_B64="__VNC_PASSWORD_B64__"
 DISPLAY_MANAGER="{{DISPLAY_MANAGER}}"
+
+# Decodificar senha VNC (armazenada em base64)
+if [ -n "$VNC_PASSWORD_B64" ] && [ "$VNC_PASSWORD_B64" != "" ]; then
+    VNC_PASSWORD=$(echo "$VNC_PASSWORD_B64" | base64 -d 2>/dev/null)
+    if [ -z "$VNC_PASSWORD" ]; then
+        echo ">>> AVISO: Falha ao decodificar VNC_PASSWORD_B64. Sera gerada senha aleatoria."
+    fi
+fi
+unset VNC_PASSWORD_B64
 
 echo ">>> VNC habilitado: $VNC_ENABLED"
 
@@ -2272,6 +2137,7 @@ fi
 
 chmod 600 "$SECRETS_FILE" 2>/dev/null || true
 unset VNC_PASSWORD
+unset VNC_PASSWORD_B64
 unset RANDOM_PASS
 
 # ============================================================
@@ -2347,7 +2213,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Configuracao de Conky',
     'core_conky.sh',
-    'Configura o Conky (monitor de sistema no desktop) com perfil dinamico via JSON.',
+    'Configura Conky (monitor de sistema).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_conky.sh
@@ -2615,7 +2481,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Configuracoes Adicionais',
     'core_config.sh',
-    'Cria /etc/seederlinux/config.env com variaveis nao-sensiveis da OM.',
+    'Configuracoes adicionais do sistema.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_config.sh
@@ -2649,7 +2515,7 @@ CONFIG_FILE="/etc/seederlinux/config.env"
 
 # ============================================================
 # Escrever variaveis nao-sensiveis no config.env
-# Variaveis sensiveis (VNC_PASSWORD, ADMIN_USERNAME) ficam em
+# Variaveis sensiveis (VNC_PASSWORD_B64, ADMIN_USERNAME) ficam em
 # /etc/seederlinux/secrets.env, gravadas por seus respectivos scripts.
 # ============================================================
 cat > "$CONFIG_FILE" <<EOF
@@ -2771,7 +2637,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Identidade Visual (Branding)',
     'core_branding.sh',
-    'Aplica wallpaper, logo, tema GTK e branding da OM.',
+    'Aplica identidade visual da OM.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_branding.sh
@@ -2802,6 +2668,29 @@ GREETER_URL="{{GREETER_URL}}"
 THEME="{{THEME}}"
 DESKTOP_ENV="{{DESKTOP_ENV}}"
 DISPLAY_MANAGER="{{DISPLAY_MANAGER}}"
+SEEDER_SERVER="{{SEEDER_SERVER}}"
+
+# ============================================================
+# Prefixar URLs de assets com SEEDER_SERVER quando relativas
+# ============================================================
+for url_var in WALLPAPER_URL WALLPAPER_LOGIN_URL LOGO_URL GREETER_URL; do
+    url_val="${!url_var}"
+    if [ -n "$url_val" ] && [ "$url_val" != "" ]; then
+        case "$url_val" in
+            http://*|https://*) ;;
+            /*)
+                # URL relativa - prefixar com SEEDER_SERVER (sem barra final)
+                server_clean="${SEEDER_SERVER%/}"
+                eval "${url_var}=\"${server_clean}${url_val}\""
+                ;;
+            *)
+                # Nao comeca com / nem http - prefixar com barra
+                server_clean="${SEEDER_SERVER%/}"
+                eval "${url_var}=\"${server_clean}/${url_val}\""
+                ;;
+        esac
+    fi
+done
 
 # ============================================================
 # Detectar ambiente grafico se nao definido
@@ -3103,7 +2992,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Script de Logon Persistente',
     'core_logon.sh',
-    'Script executado a cada logon de usuario (multi-DE).',
+    'Script de logon executado no inicio da sessao.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_logon.sh
@@ -3552,12 +3441,17 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Troca de Senha AD',
     'core_password_change.sh',
-    'Instala aplicativo grafico (Zenity) para troca de senha no Active Directory',
+    'Configura troca de senha do AD.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_password_change.sh
 # SeederLinux Lite - Troca de Senha do Active Directory
 # ============================================================================
+# Instala um aplicativo gráfico (Zenity) para troca de senha no AD.
+# É executado pelo bundle para instalar o script; a troca de senha
+# em si é feita pelo usuário quando desejar.
+# ============================================================================
+
 (
 set -e
 
@@ -3579,8 +3473,14 @@ OM_ACRONYM="{{OM_ACRONYM}}"
 
 echo ">>> Instalando aplicativo de troca de senha..."
 
+# Criar o script de troca de senha
 cat > /usr/local/bin/trocar-senha << 'EOFSCRIPT'
 #!/bin/bash
+# ============================================================================
+# Troca de Senha - Active Directory
+# Interface gráfica com Zenity para alteração de senha no domínio
+# ============================================================================
+
 DOMINIO="__DOMINIO__"
 OM_ACRONYM="__OM_ACRONYM__"
 
@@ -3591,7 +3491,8 @@ trocar_senha() {
         --add-password="Senha atual" \
         --add-password="Nova Senha" \
         --add-password="Confirme a nova senha" \
-        --width=450 --height=250)
+        --width=450 \
+        --height=250)
 
     if [ -z "$OldPasswd" ] || [ -z "$NewPasswd1" ]; then
         zenity --error --title="Erro" --text="Todos os campos devem ser preenchidos."
@@ -3599,16 +3500,27 @@ trocar_senha() {
     fi
 
     while [ "$NewPasswd1" != "$NewPasswd2" ]; do
-        NewPasswd1=$(zenity --entry --title="Trocar Senha" \
+        NewPasswd1=$(zenity --entry \
+            --title="Trocar Senha" \
             --text="As senhas não coincidem!\n\nDigite a nova senha:" \
-            --hide-text --width=400)
-        [ -z "$NewPasswd1" ] && zenity --error --title="Erro" --text="Operação cancelada." && return 1
-        NewPasswd2=$(zenity --entry --title="Trocar Senha" \
-            --text="Confirme a nova senha:" --hide-text --width=400)
+            --hide-text \
+            --width=400)
+
+        if [ -z "$NewPasswd1" ]; then
+            zenity --error --title="Erro" --text="Operação cancelada."
+            return 1
+        fi
+
+        NewPasswd2=$(zenity --entry \
+            --title="Trocar Senha" \
+            --text="Confirme a nova senha:" \
+            --hide-text \
+            --width=400)
     done
 
     if [ ${#NewPasswd1} -lt 7 ]; then
-        zenity --error --title="Senha muito curta" \
+        zenity --error \
+            --title="Senha muito curta" \
             --text="A nova senha deve ter no mínimo 7 caracteres.\n\nRequisitos do Active Directory:\n• Mínimo 7 caracteres\n• Pelo menos 3 dos 4 tipos:\n  - Maiúsculas (A-Z)\n  - Minúsculas (a-z)\n  - Números (0-9)\n  - Símbolos (@#\$% etc)"
         return 1
     fi
@@ -3616,22 +3528,28 @@ trocar_senha() {
     DC_ONLINE=""
     for DC in $(host -t SRV _ldap._tcp.$DOMINIO 2>/dev/null | awk '{print $NF}' | sed 's/\.$//'); do
         if ping -c 1 -W 2 "$DC" > /dev/null 2>&1; then
-            DC_ONLINE="$DC"; break
+            DC_ONLINE="$DC"
+            break
         fi
     done
-    [ -z "$DC_ONLINE" ] && DC_ONLINE="dc-${OM_ACRONYM,,}.$DOMINIO"
+
+    if [ -z "$DC_ONLINE" ]; then
+        DC_ONLINE="dc-${OM_ACRONYM,,}.$DOMINIO"
+    fi
 
     echo -e "$OldPasswd\n$NewPasswd1\n$NewPasswd1" | smbpasswd -r "$DC_ONLINE" -U "$USER" > /tmp/password-change.log 2>&1
 
     if grep -q "Password changed" /tmp/password-change.log; then
-        zenity --info --title="Sucesso" \
+        zenity --info \
+            --title="Sucesso" \
             --text="Senha alterada com sucesso!\n\nA nova senha entrará em vigor imediatamente.\nRecomenda-se fazer logoff e login novamente." \
             --width=400
         rm -f /tmp/password-change.log
         return 0
     else
         ERRO=$(cat /tmp/password-change.log 2>/dev/null | tail -5)
-        zenity --error --title="Erro ao trocar senha" \
+        zenity --error \
+            --title="Erro ao trocar senha" \
             --text="Não foi possível alterar a senha.\n\nMotivos possíveis:\n• Senha atual incorreta\n• Senha nova não atende aos requisitos\n• Controlador de domínio indisponível\n\nDetalhes técnicos:\n$ERRO" \
             --width=500
         rm -f /tmp/password-change.log
@@ -3639,24 +3557,38 @@ trocar_senha() {
     fi
 }
 
-command -v zenity &>/dev/null || { echo "Erro: zenity nao instalado."; exit 1; }
-command -v smbpasswd &>/dev/null || { echo "Erro: smbpasswd nao instalado."; exit 1; }
+if ! command -v zenity &>/dev/null; then
+    echo "Erro: zenity não está instalado."
+    echo "Execute: sudo apt-get install -y zenity"
+    exit 1
+fi
+
+if ! command -v smbpasswd &>/dev/null; then
+    echo "Erro: smbpasswd não está instalado."
+    echo "Execute: sudo apt-get install -y samba-common-bin"
+    exit 1
+fi
 
 trocar_senha
+
 exit $?
 EOFSCRIPT
 
+# Substituir placeholders no script instalado
 sed -i "s/__DOMINIO__/$DOMINIO/g" /usr/local/bin/trocar-senha
 sed -i "s/__OM_ACRONYM__/$OM_ACRONYM/g" /usr/local/bin/trocar-senha
+
 chmod 755 /usr/local/bin/trocar-senha
 echo ">>> Script de troca de senha instalado em /usr/local/bin/trocar-senha"
 
+# Criar entrada no menu de aplicativos
 cat > /usr/share/applications/trocar-senha.desktop << EOF
 [Desktop Entry]
 Version=1.0
 Name=Trocar Senha
 Name[pt_BR]=Trocar Senha
 Comment=Alterar senha do Active Directory
+Comment[pt_BR]=Alterar senha do Active Directory
 Exec=/usr/local/bin/trocar-senha
 Icon=dialog-password
 Terminal=false
@@ -3667,12 +3599,14 @@ EOF
 
 echo ">>> Atalho no menu criado"
 
+# Criar atalho na área de trabalho (todos os usuários futuros via /etc/skel)
 if [ -d /etc/skel ]; then
     mkdir -p /etc/skel/Desktop
     cp /usr/share/applications/trocar-senha.desktop /etc/skel/Desktop/
     chmod +x /etc/skel/Desktop/trocar-senha.desktop 2>/dev/null || true
 fi
 
+# Criar atalho para usuários existentes com diretório home em /home
 for USER_HOME in /home/*/; do
     if [ -d "${USER_HOME}Desktop" ]; then
         cp /usr/share/applications/trocar-senha.desktop "${USER_HOME}Desktop/"
@@ -3706,7 +3640,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Script de Logoff Persistente',
     'core_logoff.sh',
-    'Script executado a cada logoff de usuario.',
+    'Script de logoff executado no fim da sessao.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_logoff.sh
@@ -3929,7 +3863,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Sessao LightDM',
     'core_session_lightdm.sh',
-    'Configura LightDM como display manager (autoselecao via DISPLAY_MANAGER=lightdm).',
+    'Configura LightDM como display manager.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_session_lightdm.sh
@@ -3958,46 +3892,34 @@ DOMINIO="{{DOMINIO}}"
 DOMINIO_NETBIOS="{{DOMINIO_NETBIOS}}"
 GRUPO_ADMIN_AD="{{GRUPO_ADMIN_AD}}"
 
+if [ -z "$DISPLAY_MANAGER" ] || [ "$DISPLAY_MANAGER" = "" ]; then
+    # DISPLAY_MANAGER vazio: se LightDM ja estiver instalado, configurar greeter
+    if command -v lightdm &>/dev/null || dpkg -l lightdm 2>/dev/null | grep -q "^ii"; then
+        echo ">>> DISPLAY_MANAGER vazio, mas LightDM ja esta instalado. Configurando greeter."
+    else
+        echo ">>> DISPLAY_MANAGER nao configurado. Nenhum DM sera instalado."
+        exit 0
+    fi
+fi
+
+if [ "$DISPLAY_MANAGER" != "lightdm" ] && [ "$DISPLAY_MANAGER" != "" ]; then
+    echo ">>> DISPLAY_MANAGER e $DISPLAY_MANAGER (nao e lightdm). Pulando."
+    exit 0
+fi
+
 echo ">>> Display Manager: $DISPLAY_MANAGER"
 echo ">>> Ambiente: $DESKTOP_ENV"
 
 # ============================================================
-# Detectar Display Manager ativo (se nao definido)
+# Instalar LightDM (pular se ja estiver instalado)
 # ============================================================
-if [ -z "$DISPLAY_MANAGER" ] || [ "$DISPLAY_MANAGER" = "" ]; then
-    if systemctl is-active --quiet lightdm 2>/dev/null; then DISPLAY_MANAGER="lightdm"
-    elif systemctl is-active --quiet gdm3 2>/dev/null; then DISPLAY_MANAGER="gdm3"
-    elif systemctl is-active --quiet sddm 2>/dev/null; then DISPLAY_MANAGER="sddm"
-    elif [ -f /etc/X11/default-display-manager ]; then
-        DISPLAY_MANAGER="$(basename "$(cat /etc/X11/default-display-manager)")"
-    elif command -v cinnamon-session &>/dev/null || command -v mate-session &>/dev/null || command -v startxfce4 &>/dev/null; then
-        DISPLAY_MANAGER="lightdm"
-    elif command -v gnome-session &>/dev/null; then
-        DISPLAY_MANAGER="gdm3"
-    elif command -v startplasma-x11 &>/dev/null; then
-        DISPLAY_MANAGER="sddm"
-    else
-        DISPLAY_MANAGER="lightdm"
-    fi
-    echo ">>> Display Manager detectado: $DISPLAY_MANAGER"
+if ! command -v lightdm &>/dev/null && ! dpkg -l lightdm 2>/dev/null | grep -q "^ii"; then
+    echo ">>> Instalando LightDM..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y lightdm lightdm-gtk-greeter
+else
+    echo ">>> LightDM ja esta instalado. Pulando instalacao."
 fi
-
-# ============================================================
-# Verificar se este script deve ser executado
-# ============================================================
-if [ "$DISPLAY_MANAGER" != "lightdm" ]; then
-    echo ">>> Display Manager nao e lightdm. Pulando este script."
-    echo ">>> [14a] LightDM nao configurado (DM diferente)."
-    echo "============================================================"
-    exit 0
-fi
-
-# ============================================================
-# Instalar LightDM
-# ============================================================
-echo ">>> Instalando LightDM..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get install -y lightdm lightdm-gtk-greeter
 
 # Garantir que o LightDM seja o DM padrao
 echo "lightdm shared/default-x-display-manager select lightdm" | debconf-set-selections 2>/dev/null || true
@@ -4111,7 +4033,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Sessao GDM3',
     'core_session_gdm3.sh',
-    'Configura GDM3 como display manager (autoselecao via DISPLAY_MANAGER=gdm3).',
+    'Configura GDM3 como display manager.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_session_gdm3.sh
@@ -4140,39 +4062,18 @@ DOMINIO="{{DOMINIO}}"
 DOMINIO_NETBIOS="{{DOMINIO_NETBIOS}}"
 GRUPO_ADMIN_AD="{{GRUPO_ADMIN_AD}}"
 
-echo ">>> Display Manager: $DISPLAY_MANAGER"
-echo ">>> Ambiente: $DESKTOP_ENV"
-
-# ============================================================
-# Detectar Display Manager ativo (se nao definido)
-# ============================================================
 if [ -z "$DISPLAY_MANAGER" ] || [ "$DISPLAY_MANAGER" = "" ]; then
-    if systemctl is-active --quiet lightdm 2>/dev/null; then DISPLAY_MANAGER="lightdm"
-    elif systemctl is-active --quiet gdm3 2>/dev/null; then DISPLAY_MANAGER="gdm3"
-    elif systemctl is-active --quiet sddm 2>/dev/null; then DISPLAY_MANAGER="sddm"
-    elif [ -f /etc/X11/default-display-manager ]; then
-        DISPLAY_MANAGER="$(basename "$(cat /etc/X11/default-display-manager)")"
-    elif command -v cinnamon-session &>/dev/null || command -v mate-session &>/dev/null || command -v startxfce4 &>/dev/null; then
-        DISPLAY_MANAGER="lightdm"
-    elif command -v gnome-session &>/dev/null; then
-        DISPLAY_MANAGER="gdm3"
-    elif command -v startplasma-x11 &>/dev/null; then
-        DISPLAY_MANAGER="sddm"
-    else
-        DISPLAY_MANAGER="lightdm"
-    fi
-    echo ">>> Display Manager detectado: $DISPLAY_MANAGER"
-fi
-
-# ============================================================
-# Verificar se este script deve ser executado
-# ============================================================
-if [ "$DISPLAY_MANAGER" != "gdm3" ]; then
-    echo ">>> Display Manager nao e gdm3. Pulando este script."
-    echo ">>> [14b] GDM3 nao configurado (DM diferente)."
-    echo "============================================================"
+    echo ">>> DISPLAY_MANAGER nao configurado. Nenhum DM sera instalado."
     exit 0
 fi
+
+if [ "$DISPLAY_MANAGER" != "gdm3" ]; then
+    echo ">>> DISPLAY_MANAGER e $DISPLAY_MANAGER (nao e gdm3). Pulando."
+    exit 0
+fi
+
+echo ">>> Display Manager: $DISPLAY_MANAGER"
+echo ">>> Ambiente: $DESKTOP_ENV"
 
 # ============================================================
 # Instalar GDM3
@@ -4298,7 +4199,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Sessao SDDM',
     'core_session_sddm.sh',
-    'Configura SDDM como display manager (autoselecao via DISPLAY_MANAGER=sddm).',
+    'Configura SDDM como display manager.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_session_sddm.sh
@@ -4327,39 +4228,18 @@ DOMINIO="{{DOMINIO}}"
 DOMINIO_NETBIOS="{{DOMINIO_NETBIOS}}"
 GRUPO_ADMIN_AD="{{GRUPO_ADMIN_AD}}"
 
-echo ">>> Display Manager: $DISPLAY_MANAGER"
-echo ">>> Ambiente: $DESKTOP_ENV"
-
-# ============================================================
-# Detectar Display Manager ativo (se nao definido)
-# ============================================================
 if [ -z "$DISPLAY_MANAGER" ] || [ "$DISPLAY_MANAGER" = "" ]; then
-    if systemctl is-active --quiet lightdm 2>/dev/null; then DISPLAY_MANAGER="lightdm"
-    elif systemctl is-active --quiet gdm3 2>/dev/null; then DISPLAY_MANAGER="gdm3"
-    elif systemctl is-active --quiet sddm 2>/dev/null; then DISPLAY_MANAGER="sddm"
-    elif [ -f /etc/X11/default-display-manager ]; then
-        DISPLAY_MANAGER="$(basename "$(cat /etc/X11/default-display-manager)")"
-    elif command -v cinnamon-session &>/dev/null || command -v mate-session &>/dev/null || command -v startxfce4 &>/dev/null; then
-        DISPLAY_MANAGER="lightdm"
-    elif command -v gnome-session &>/dev/null; then
-        DISPLAY_MANAGER="gdm3"
-    elif command -v startplasma-x11 &>/dev/null; then
-        DISPLAY_MANAGER="sddm"
-    else
-        DISPLAY_MANAGER="lightdm"
-    fi
-    echo ">>> Display Manager detectado: $DISPLAY_MANAGER"
-fi
-
-# ============================================================
-# Verificar se este script deve ser executado
-# ============================================================
-if [ "$DISPLAY_MANAGER" != "sddm" ]; then
-    echo ">>> Display Manager nao e sddm. Pulando este script."
-    echo ">>> [14c] SDDM nao configurado (DM diferente)."
-    echo "============================================================"
+    echo ">>> DISPLAY_MANAGER nao configurado. Nenhum DM sera instalado."
     exit 0
 fi
+
+if [ "$DISPLAY_MANAGER" != "sddm" ]; then
+    echo ">>> DISPLAY_MANAGER e $DISPLAY_MANAGER (nao e sddm). Pulando."
+    exit 0
+fi
+
+echo ">>> Display Manager: $DISPLAY_MANAGER"
+echo ">>> Ambiente: $DESKTOP_ENV"
 
 # ============================================================
 # Instalar SDDM
@@ -4488,7 +4368,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Agente de Check-in',
     'core_agent.sh',
-    'Baixa e instala o agente de check-in periodico (cron a cada 15 min).',
+    'Instala agente de check-in periodico.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_agent.sh
@@ -4498,6 +4378,7 @@ VALUES (
 # executa o primeiro check-in em background.
 # ============================================================================
 
+(
 set -e
 
 echo "============================================================"
@@ -4508,7 +4389,7 @@ INSTALL_AGENT="{{INSTALL_AGENT}}"
 if [ "$INSTALL_AGENT" != "true" ]; then
     echo ">>> Instalacao do agente desativada (INSTALL_AGENT=false). Pulando."
     echo "============================================================"
-    return 0
+    exit 0
 fi
 
 SEEDER_SERVER="{{SEEDER_SERVER}}"
@@ -4521,12 +4402,18 @@ echo ">>> Organizacao: $OM_ACRONYM"
 # Baixar o agente
 mkdir -p /usr/local/bin
 if wget -q -O /usr/local/bin/seeder-agent "${SEEDER_SERVER}/downloads/agent.py"; then
+    # Verificar que o arquivo nao esta vazio
+    if [ ! -s /usr/local/bin/seeder-agent ]; then
+        echo ">>> ERRO: Agente baixado mas arquivo esta vazio. Verifique $SEEDER_SERVER"
+        echo "============================================================"
+        exit 1
+    fi
     chmod 755 /usr/local/bin/seeder-agent
     echo ">>> Agente baixado com sucesso"
 else
     echo ">>> ERRO: Falha ao baixar o agente. Verifique conectividade com $SEEDER_SERVER"
     echo "============================================================"
-    return 1
+    exit 1
 fi
 
 # Criar configuracao
@@ -4549,6 +4436,7 @@ nohup /usr/local/bin/seeder-agent --org "$OM_ACRONYM" --no-check-certificate > /
 
 echo ">>> [18] Agente instalado e agendado!"
 echo "============================================================"
+)
 $SeederScript$,
     TRUE,
     TRUE,
@@ -4571,7 +4459,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Configuracao de Proxy',
     'core_proxy.sh',
-    'Configura proxy corporativo no sistema (apt, curl, wget, env).',
+    'Configura proxy do sistema.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_proxy.sh
