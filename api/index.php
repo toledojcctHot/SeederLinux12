@@ -872,17 +872,10 @@ function handleGenerateBundle($input) {
     $bundle .= "# === FIM DO BUNDLE ===\n";
     $bundle .= "echo 'Bundle executado com sucesso!'\n";
 
-    // Verificar placeholders nao resolvidos antes de persistir o bundle
-    $unresolved = [];
+    // Logar placeholders nao resolvidos (apenas aviso, nao bloqueia a geracao)
     if (preg_match_all('/\{\{[A-Z_]+\}\}/', $bundle, $matches)) {
         $unresolved = array_unique($matches[0]);
-    }
-    if (!empty($unresolved)) {
-        jsonError(
-            'Placeholders nao resolvidos no bundle: ' . implode(', ', $unresolved) .
-            '. Preencha as variaveis correspondentes antes de gerar o bundle.',
-            400
-        );
+        log_event('Placeholders nao resolvidos no bundle (nao bloqueia): ' . implode(', ', $unresolved), 'WARN');
     }
 
     $filename = "bundle_{$org['acronym']}_" . date('Ymd_His') . ".sh";

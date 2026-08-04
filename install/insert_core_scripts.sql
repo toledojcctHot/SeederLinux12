@@ -1122,7 +1122,7 @@ VALUES (
 # ============================================================================
 # Configura Kerberos, Samba, SSSD, PAM, NSS, sudo e mkhomedir para
 # ingressar a estacao no dominio Active Directory.
-# Os placeholders {{VARIAVEL}} são substituídos automaticamente
+# Os placeholders VARIAVEL são substituídos automaticamente
 # pelo sistema na geração do bundle.
 # ============================================================================
 
