@@ -1222,9 +1222,14 @@ EOF
 echo ">>> Samba configurado"
 
 # ============================================================
-# Ingressar no dominio
+# Ajustar DNS para o DC (IMPRESCINDÍVEL para ingresso)
 # ============================================================
-echo ">>> Ingressando no dominio..."
+echo ">>> Ajustando DNS para ingresso no dominio..."
+cat > /etc/resolv.conf <<EOF
+nameserver $DC_IP
+search $DOMINIO
+EOF
+echo ">>> DNS ajustado para: $DC_IP"
 
 # ============================================================
 # Obter ticket Kerberos
@@ -1284,27 +1289,78 @@ if [ "$KINIT_OK" != "true" ]; then
 fi
 echo ">>> Ticket Kerberos obtido com sucesso!"
 
-# Ingressar com net ads join
-net ads join -U "${ADMIN_USERNAME}@${DOMINIO_NETBIOS}" \
-    createcomputer="${OU_PADRAO}" || {
-    echo ">>> ERRO: Falha ao ingressar no dominio"
-    exit 1
-}
-echo ">>> Ingresso no dominio realizado"
+# ============================================================
+# Ingressar no dominio
+# Metodo 1 (PRINCIPAL): realm join (SSSD)
+# Metodo 2 (FALLBACK): net ads join (Winbind)
+# ============================================================
+JOIN_OK=false
+JOIN_METHOD=""
 
-# ============================================================
-# Configurar SSSD
-# ============================================================
-echo ">>> Configurando SSSD..."
-OFFLINE_CACHE=""
-if [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
-    DAYS="${OFFLINE_AUTH_DAYS:-3}"
-    OFFLINE_CACHE="cache_credentials = true
-    krb5_store_password_if_offline = true
-    offline_credentials_expiration = ${DAYS}"
+# --- Metodo 1: realm join (SSSD) ---
+echo ">>> Ingressando no dominio via realm join (SSSD)..."
+if echo "$ADMIN_PASSWORD" | realm join "$DOMINIO" \
+    --user="$ADMIN_USERNAME" \
+    --computer-ou="$OU_PADRAO" \
+    --verbose 2>&1; then
+
+    JOIN_OK=true
+    JOIN_METHOD="sssd"
+    echo ">>> Ingresso via SSSD (realm join) bem-sucedido!"
 fi
 
-cat > /etc/sssd/sssd.conf <<EOF
+# --- Metodo 2: net ads join (Winbind) ---
+if [ "$JOIN_OK" != "true" ]; then
+    echo ">>> realm join falhou. Tentando fallback com net ads join (Winbind)..."
+
+    # Garantir kerberos method no smb.conf (necessario para keytab)
+    if ! grep -q "kerberos method" /etc/samba/smb.conf; then
+        sed -i '/\[global\]/a\    kerberos method = secrets and keytab' /etc/samba/smb.conf
+    fi
+
+    if echo "$ADMIN_PASSWORD" | net ads join "$DOMINIO" \
+        -U "$ADMIN_USERNAME" \
+        createcomputer="$OU_PADRAO" 2>&1; then
+
+        JOIN_OK=true
+        JOIN_METHOD="winbind"
+        echo ">>> Ingresso via Winbind (net ads join) bem-sucedido!"
+
+        # Gerar keytab manualmente (obrigatorio para Winbind)
+        net ads keytab create -U "$ADMIN_USERNAME" -P "$ADMIN_PASSWORD" 2>/dev/null || {
+            echo ">>> AVISO: Falha ao gerar keytab. Tentando com adcli..."
+            echo "$ADMIN_PASSWORD" | adcli join "$DOMINIO" \
+                --login-user="$ADMIN_USERNAME" \
+                --domain-ou="$OU_PADRAO" \
+                --stdin-password 2>&1 || true
+        }
+    fi
+fi
+
+# --- Se ambos falharem ---
+if [ "$JOIN_OK" != "true" ]; then
+    echo ">>> ERRO: Falha ao ingressar no dominio com todos os metodos."
+    read -p ">>> Deseja continuar mesmo assim? (S/n): " CONTINUE
+    if [[ "$CONTINUE" =~ ^[Nn]$ ]]; then
+        echo ">>> Instalacao abortada pelo usuario."
+        exit 1
+    fi
+fi
+
+# ============================================================
+# Configurar SSSD (apenas se metodo for sssd)
+# ============================================================
+if [ "$JOIN_METHOD" = "sssd" ]; then
+    echo ">>> Configurando SSSD..."
+    OFFLINE_CACHE=""
+    if [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
+        DAYS="${OFFLINE_AUTH_DAYS:-3}"
+        OFFLINE_CACHE="cache_credentials = true
+        krb5_store_password_if_offline = true
+        offline_credentials_expiration = ${DAYS}"
+    fi
+
+    cat > /etc/sssd/sssd.conf <<EOF
 [sssd]
 services = nss, pam, sudo
 config_file_version = 2
@@ -1327,14 +1383,31 @@ domains = ${DOMINIO}
     ldap_sudo_search_base = OU=sudoers,${OU_PADRAO}
 EOF
 
-chmod 600 /etc/sssd/sssd.conf
-echo ">>> SSSD configurado"
+    chmod 600 /etc/sssd/sssd.conf
+    echo ">>> SSSD configurado"
+fi
 
 # ============================================================
 # Configurar NSS
 # ============================================================
 echo ">>> Configurando NSS..."
-cat > /etc/nsswitch.conf <<EOF
+if [ "$JOIN_METHOD" = "winbind" ]; then
+    cat > /etc/nsswitch.conf <<EOF
+passwd:     files systemd winbind
+shadow:     files winbind
+group:      files systemd winbind
+gshadow:    files
+
+hosts:      files dns
+
+services:   files
+netgroup:   files
+sudoers:    files
+
+automount:  files
+EOF
+else
+    cat > /etc/nsswitch.conf <<EOF
 passwd:     files systemd sss
 shadow:     files sss
 group:      files systemd sss
@@ -1348,6 +1421,7 @@ sudoers:    files sss
 
 automount:  files sss
 EOF
+fi
 
 echo ">>> NSS configurado"
 
@@ -1392,11 +1466,16 @@ echo ">>> Sudo configurado"
 # Reiniciar servicos
 # ============================================================
 echo ">>> Reiniciando servicos..."
+if [ "$JOIN_METHOD" = "sssd" ]; then
+    systemctl restart sssd 2>/dev/null || true
+    systemctl enable sssd
+elif [ "$JOIN_METHOD" = "winbind" ]; then
+    systemctl restart winbind 2>/dev/null || true
+    systemctl enable winbind
+fi
 systemctl restart samba 2>/dev/null || true
-systemctl restart sssd
-systemctl enable sssd
 
-echo ">>> [04] Ingresso no AD concluido!"
+echo ">>> [04] Ingresso no AD concluido! Metodo: ${JOIN_METHOD:-manual}"
 echo "============================================================="
 $SeederScript$,
     TRUE,

@@ -1184,6 +1184,20 @@ async function saveVariables() {
         }
     });
 
+    // Normalize URL fields: ensure they start with http:// or https://
+    const urlVarNames = allVariables
+        .filter(v => v.type === 'url' || v.name.includes('URL') || v.name.includes('SERVER') || v.name === 'HOMEPAGE')
+        .map(v => String(v.id));
+    for (const varId of Object.keys(collected)) {
+        if (urlVarNames.includes(varId)) {
+            let val = (collected[varId] || '').trim();
+            if (val && !/^https?:\/\//.test(val)) {
+                val = 'http://' + val;
+                collected[varId] = val;
+            }
+        }
+    }
+
     Object.assign(updates, collected);
 
     const res = await API.post('variables-update', { organization_id: currentOrgId, variables: updates });
