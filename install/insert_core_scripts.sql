@@ -12,6 +12,7 @@
 -- Limpar scripts core existentes (opcional - descomente se necessario)
 -- DELETE FROM scripts WHERE is_core = TRUE;
 
+
 -- ============================================================================
 -- Configuracao de DNS (ordem 1) - core_dns.sh
 -- ============================================================================
@@ -161,6 +162,7 @@ $SeederScript$,
     version = EXCLUDED.version,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
+
 
 -- ============================================================================
 -- Configuracao de Repositorios (ordem 2) - core_repositories.sh
@@ -433,6 +435,7 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
 -- Instalacao de Pacotes (ordem 3) - core_packages.sh
 -- ============================================================================
@@ -440,7 +443,7 @@ INSERT INTO scripts (name, filename, description, content, is_core, is_active, e
 VALUES (
     'Instalacao de Pacotes',
     'core_packages.sh',
-    'Instala pacotes base do sistema.',
+    'Instala TODOS os pacotes necessarios (sistema, OCS, CUPS, VNC, Conky, Java, etc).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_packages.sh
@@ -731,390 +734,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
--- ============================================================================
--- Suporte a Sistemas Legados (ordem 4) - core_legados.sh
--- ============================================================================
-INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
-VALUES (
-    'Suporte a Sistemas Legados',
-    'core_legados.sh',
-    'Configura suporte a sistemas legados.',
-    $SeederScript$#!/bin/bash
-# ============================================================================
-# Core Script: core_legados.sh
-# SeederLinux Lite - Java 8, Firefox 52.7 ESR (sistemas legados)
-# ============================================================================
-# Instala Java 8 (OpenJDK) e/ou Firefox 52.7 ESR para compatibilidade
-# com sistemas legados (applets Java, sistemas antigos da intranet).
-# Cada componente e controlado por seu proprio toggle:
-#   INSTALL_JAVA8     - Instalar Java 8?
-#   INSTALL_FIREFOX52 - Instalar Firefox 52.7 ESR?
-# Os placeholders VARIAVEL sao substituidos automaticamente
-# pelo sistema na geracao do bundle.
-# Executado ANTES de core_domain.sh para evitar erro 407 de proxy.
-# ============================================================================
-
-(
-set -e
-
-echo "============================================================"
-echo "05 - Configurar sistemas legados (Java 8, Firefox 52.7)"
-echo "============================================================"
-
-# ============================================================
-# Variaveis
-# ============================================================
-INSTALL_JAVA8="{{INSTALL_JAVA8}}"
-INSTALL_FIREFOX52="{{INSTALL_FIREFOX52}}"
-BASE_URL="{{BASE_URL}}"
-PROXY_MODE="{{PROXY_MODE}}"
-PROXY_HTTP="{{PROXY_HTTP}}"
-PROXY_PORTA="{{PROXY_PORTA}}"
-JAVA_EXCEPTIONS="{{JAVA_EXCEPTIONS}}"
-
-echo ">>> Instalar Java 8: $INSTALL_JAVA8"
-echo ">>> Instalar Firefox 52.7: $INSTALL_FIREFOX52"
-echo ">>> Excecoes Java: ${JAVA_EXCEPTIONS:-nenhuma}"
-
-# ============================================================
-# Verificar se pelo menos um toggle esta ativo
-# ============================================================
-if [ "$INSTALL_JAVA8" != "true" ] && [ "$INSTALL_FIREFOX52" != "true" ]; then
-    echo ">>> Sistemas legados desativados. Pulando."
-    echo ">>> [05] Sistemas legados nao instalados (desativado)."
-    echo "============================================================"
-    exit 0
-fi
-
-export DEBIAN_FRONTEND=noninteractive
-
-# Configurar proxy para downloads
-if [ "$PROXY_MODE" = "MANUAL" ] && [ -n "$PROXY_HTTP" ] && [ "$PROXY_HTTP" != "" ]; then
-    export http_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
-    export https_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
-fi
-
-# ============================================================
-# Java 8 (OpenJDK 8) - apenas se INSTALL_JAVA8=true
-# ============================================================
-if [ "$INSTALL_JAVA8" = "true" ]; then
-    echo ">>> Instalando Java 8 (OpenJDK 8)..."
-
-    if command -v java &>/dev/null; then
-        JAVA_VERSION=$(java -version 2>&1 | head -1)
-        echo ">>> Java ja instalado: $JAVA_VERSION"
-    else
-        echo ">>> AVISO: Java 8 nao foi instalado no core_packages.sh."
-        echo ">>> Tentando instalar via repositorio Adoptium/Temurin..."
-
-        if wget -q -O /tmp/adoptium-key.asc "https://packages.adoptium.net/artifactory/api/gpg/key/public" 2>/dev/null; then
-            gpg --dearmor < /tmp/adoptium-key.asc > /usr/share/keyrings/adoptium-keyring.gpg 2>/dev/null || true
-            echo "deb [signed-by=/usr/share/keyrings/adoptium-keyring.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" \
-                > /etc/apt/sources.list.d/adoptium.list
-            apt-get update
-            apt-get install -y temurin-8-jre || {
-                echo ">>> AVISO: Falha ao instalar Java 8 via Adoptium."
-            }
-            rm -f /tmp/adoptium-key.asc
-        else
-            echo ">>> AVISO: Nao foi possivel obter chave do repositorio Java 8."
-        fi
-    fi
-
-    # Configurar excecoes Java (deployment.properties) se fornecidas
-    if [ -n "$JAVA_EXCEPTIONS" ] && [ "$JAVA_EXCEPTIONS" != "" ]; then
-        echo ">>> Configurando excecoes Java..."
-        DEPLOY_DIR="/usr/lib/jvm/.deployment"
-        mkdir -p "$DEPLOY_DIR"
-        DEPLOY_FILE="$DEPLOY_DIR/deployment.properties"
-        echo "# Excecoes Java - SeederLinux" > "$DEPLOY_FILE"
-        echo "deployment.security.level=MEDIUM" >> "$DEPLOY_FILE"
-
-        IFS=$'\n,' read -ra EXC_URLS <<< "$JAVA_EXCEPTIONS"
-        IDX=0
-        for EXC_URL in "${EXC_URLS[@]}"; do
-            EXC_URL=$(echo "$EXC_URL" | xargs)
-            if [ -n "$EXC_URL" ] && [ "$EXC_URL" != "" ]; then
-                echo "javaws.allow.${IDX}=$EXC_URL" >> "$DEPLOY_FILE"
-                IDX=$((IDX+1))
-            fi
-        done
-        echo ">>> Excecoes Java configuradas ($IDX URLs)"
-    fi
-
-    if command -v java &>/dev/null; then
-        JAVA_VERSION=$(java -version 2>&1 | head -1)
-        echo ">>> Java instalado: $JAVA_VERSION"
-    else
-        echo ">>> AVISO: Java nao instalado."
-    fi
-else
-    echo ">>> Java 8 desativado (INSTALL_JAVA8=false). Pulando."
-fi
-
-# ============================================================
-# Firefox 52.7 ESR (para applets Java) - apenas se INSTALL_FIREFOX52=true
-# ============================================================
-if [ "$INSTALL_FIREFOX52" = "true" ]; then
-    echo ">>> Instalando Firefox 52.7 ESR..."
-
-    FF_LEGADO_DIR="/opt/firefox-legado"
-    FF_LEGADO_TARBALL="/tmp/firefox-52.7-esr.tar.bz2"
-    FF_LEGADO_URL="${BASE_URL}/downloads/firefox-52.7.3esr.tar.bz2"
-
-    mkdir -p /opt
-
-    if wget -q -O "$FF_LEGADO_TARBALL" "$FF_LEGADO_URL" 2>/dev/null; then
-        echo ">>> Firefox 52.7 baixado do repositorio interno"
-        tar xjf "$FF_LEGADO_TARBALL" -C /opt/
-        mv /opt/firefox "$FF_LEGADO_DIR" 2>/dev/null || true
-        rm -f "$FF_LEGADO_TARBALL"
-    else
-        echo ">>> AVISO: Nao foi possivel baixar Firefox 52.7 do repositorio interno."
-        echo ">>> Tentando download da Mozilla..."
-
-        FF_MOZILLA_URL="https://ftp.mozilla.org/pub/firefox/releases/52.7.3esr/linux-x86_64/en-US/firefox-52.7.3esr.tar.bz2"
-        if wget -q -O "$FF_LEGADO_TARBALL" "$FF_MOZILLA_URL" 2>/dev/null; then
-            tar xjf "$FF_LEGADO_TARBALL" -C /opt/
-            mv /opt/firefox "$FF_LEGADO_DIR" 2>/dev/null || true
-            rm -f "$FF_LEGADO_TARBALL"
-        else
-            echo ">>> AVISO: Nao foi possivel baixar Firefox 52.7."
-        fi
-    fi
-
-    if [ -d "$FF_LEGADO_DIR" ]; then
-        ln -sf "${FF_LEGADO_DIR}/firefox" /usr/local/bin/firefox-legado
-        echo ">>> Firefox 52.7 ESR instalado em: $FF_LEGADO_DIR"
-
-        mkdir -p /usr/share/applications
-        cat > /usr/share/applications/firefox-legado.desktop <<EOF
-[Desktop Entry]
-Version=1.0
-Name=Firefox 52.7 ESR (Legado)
-Comment=Navegador Firefox 52.7 ESR para sistemas legados
-Exec=${FF_LEGADO_DIR}/firefox
-Icon=${FF_LEGADO_DIR}/browser/icons/mozicon128.png
-Terminal=false
-Type=Application
-Categories=Network;WebBrowser;
-EOF
-        echo ">>> Entrada de desktop criada"
-    else
-        echo ">>> AVISO: Firefox 52.7 ESR nao instalado."
-    fi
-
-    echo ">>> Configurando plugin Java para Firefox legado..."
-    if [ -d "$FF_LEGADO_DIR" ] && command -v java &>/dev/null; then
-        JAVA_HOME_DIR=$(dirname $(dirname $(readlink -f $(which java))))
-        PLUGIN_DIR="${FF_LEGADO_DIR}/browser/plugins"
-        mkdir -p "$PLUGIN_DIR"
-
-        find "$JAVA_HOME_DIR" -name "libnpjp2.so" -exec ln -sf {} "$PLUGIN_DIR/libnpjp2.so" \; 2>/dev/null || {
-            echo ">>> AVISO: Plugin Java (libnpjp2.so) nao encontrado."
-        }
-        echo ">>> Plugin Java configurado"
-    fi
-else
-    echo ">>> Firefox 52.7 desativado (INSTALL_FIREFOX52=false). Pulando."
-fi
-
-echo ">>> [05] Sistemas legados configurados!"
-echo "============================================================"
-)
-$SeederScript$,
-    TRUE,
-    TRUE,
-    4,
-    1,
-    NULL
-) ON CONFLICT (filename) DO UPDATE SET
-    name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    content = EXCLUDED.content,
-    execution_order = EXCLUDED.execution_order,
-    version = EXCLUDED.version,
-    is_active = EXCLUDED.is_active,
-    updated_at = CURRENT_TIMESTAMP;
 
 -- ============================================================================
--- Instalacao de Aplicacoes Extras (ordem 5) - core_apps.sh
--- ============================================================================
-INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
-VALUES (
-    'Instalacao de Aplicacoes Extras',
-    'core_apps.sh',
-    'Instala aplicacoes extras.',
-    $SeederScript$#!/bin/bash
-# ============================================================================
-# Core Script: core_apps.sh
-# SeederLinux Lite - OnlyOffice, Chrome, Firefox ESR
-# ============================================================================
-# Instala aplicativos adicionais: OnlyOffice Desktop Editors, Google Chrome
-# estavel e Firefox ESR.
-# Os placeholders VARIAVEL são substituídos automaticamente
-# pelo sistema na geração do bundle.
-# ============================================================================
-
-(
-set -e
-
-echo "============================================================"
-echo "10 - Instalar aplicativos (Chrome, OnlyOffice via .deb/wget)"
-echo "============================================================"
-
-# ============================================================
-# Variáveis
-# ============================================================
-INSTALL_ONLYOFFICE="{{INSTALL_ONLYOFFICE}}"
-INSTALL_CHROME="{{INSTALL_CHROME}}"
-INSTALL_CHROMIUM="{{INSTALL_CHROMIUM}}"
-BASE_URL="{{BASE_URL}}"
-PROXY_MODE="{{PROXY_MODE}}"
-PROXY_HTTP="{{PROXY_HTTP}}"
-PROXY_PORTA="{{PROXY_PORTA}}"
-
-echo ">>> Instalar OnlyOffice: $INSTALL_ONLYOFFICE"
-echo ">>> Instalar Chrome: $INSTALL_CHROME"
-echo ">>> Instalar Chromium: $INSTALL_CHROMIUM"
-
-# ============================================================
-# Verificar se pelo menos um toggle esta ativo
-# ============================================================
-if [ "$INSTALL_ONLYOFFICE" != "true" ] && [ "$INSTALL_CHROME" != "true" ] && [ "$INSTALL_CHROMIUM" != "true" ]; then
-    echo ">>> Instalacao de apps desativada. Pulando."
-    echo ">>> [10] Aplicativos nao instalados (desativado)."
-    echo "============================================================"
-    exit 0
-fi
-
-export DEBIAN_FRONTEND=noninteractive
-
-# Configurar proxy para downloads se necessario
-if [ "$PROXY_MODE" = "MANUAL" ] && [ -n "$PROXY_HTTP" ] && [ "$PROXY_HTTP" != "" ]; then
-    export http_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
-    export https_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
-fi
-
-# ============================================================
-# Google Chrome (instalado via .deb/wget, nao via apt-get)
-# ============================================================
-if [ "$INSTALL_CHROME" = "true" ]; then
-    echo ">>> Instalando Google Chrome..."
-    CHROME_DEB="/tmp/google-chrome-stable.deb"
-
-    # Baixar Chrome
-    if wget -q -O "$CHROME_DEB" "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"; then
-        apt-get install -y "$CHROME_DEB" || {
-            echo ">>> AVISO: Falha ao instalar Google Chrome. Tentando dependencias..."
-            apt-get install -y -f
-            apt-get install -y "$CHROME_DEB" || {
-                echo ">>> AVISO: Google Chrome nao instalado."
-            }
-        }
-        rm -f "$CHROME_DEB"
-    else
-        echo ">>> AVISO: Nao foi possivel baixar Google Chrome."
-        echo ">>> Verifique conectividade e configuracao de proxy."
-    fi
-else
-    echo ">>> Google Chrome desativado (INSTALL_CHROME=false). Pulando."
-fi
-
-# ============================================================
-# Chromium (via apt-get)
-# ============================================================
-if [ "$INSTALL_CHROMIUM" = "true" ]; then
-    echo ">>> Instalando Chromium..."
-    apt-get install -y chromium 2>/dev/null || apt-get install -y chromium-browser 2>/dev/null || {
-        echo ">>> AVISO: Nao foi possivel instalar Chromium."
-    }
-else
-    echo ">>> Chromium desativado (INSTALL_CHROMIUM=false). Pulando."
-fi
-
-# ============================================================
-# OnlyOffice Desktop Editors
-# ============================================================
-if [ "$INSTALL_ONLYOFFICE" = "true" ]; then
-    echo ">>> Instalando OnlyOffice Desktop Editors..."
-
-# Metodo 1: Via repositorio APT oficial
-ONLYOFFICE_KEY="/tmp/onlyoffice-key.asc"
-ONLYOFFICE_REPO_LIST="/etc/apt/sources.list.d/onlyoffice.list"
-
-# Baixar e adicionar chave GPG
-if wget -q -O "$ONLYOFFICE_KEY" "https://download.onlyoffice.com/GPG-KEY-ONLYOFFICE"; then
-    gpg --dearmor < "$ONLYOFFICE_KEY" > /usr/share/keyrings/onlyoffice-keyring.gpg 2>/dev/null || \
-        apt-key add "$ONLYOFFICE_KEY" 2>/dev/null || true
-
-    cat > "$ONLYOFFICE_REPO_LIST" <<EOF
-deb [signed-by=/usr/share/keyrings/onlyoffice-keyring.gpg] https://download.onlyoffice.com/repo/debian squeeze main
-EOF
-
-    apt-get update
-    apt-get install -y onlyoffice-desktopeditors || {
-        echo ">>> AVISO: Falha ao instalar OnlyOffice via repositorio."
-        echo ">>> Tentando download direto..."
-
-        # Metodo 2: Download direto do .deb
-        ONLYOFFICE_DEB="/tmp/onlyoffice-desktopeditors.deb"
-        if wget -q -O "$ONLYOFFICE_DEB" "https://download.onlyoffice.com/install/desktop/editors/linux/onlyoffice-desktopeditors_amd64.deb"; then
-            apt-get install -y "$ONLYOFFICE_DEB" || {
-                echo ">>> AVISO: Falha ao instalar OnlyOffice via .deb direto."
-            }
-            rm -f "$ONLYOFFICE_DEB"
-        else
-            echo ">>> AVISO: Nao foi possivel baixar OnlyOffice."
-        fi
-    }
-    rm -f "$ONLYOFFICE_KEY"
-else
-    echo ">>> AVISO: Nao foi possivel obter chave do OnlyOffice."
-    echo ">>> Tentando instalar via repositorio Debian..."
-
-    apt-get install -y onlyoffice-desktopeditors 2>/dev/null || {
-            echo ">>> AVISO: OnlyOffice nao disponivel. Instalacao ignorada."
-        }
-    fi
-else
-    echo ">>> OnlyOffice desativado (INSTALL_ONLYOFFICE=false). Pulando."
-fi
-
-# ============================================================
-# Verificar instalacoes
-# ============================================================
-echo ">>> Verificando instalacoes..."
-command -v firefox-esr &> /dev/null && echo ">>> Firefox ESR: OK" || echo ">>> Firefox ESR: NAO INSTALADO"
-command -v google-chrome &> /dev/null && echo ">>> Google Chrome: OK" || echo ">>> Google Chrome: NAO INSTALADO"
-command -v onlyoffice-desktopeditors &> /dev/null && echo ">>> OnlyOffice: OK" || echo ">>> OnlyOffice: NAO INSTALADO"
-
-echo ">>> [10] Aplicativos instalados!"
-echo "============================================================"
-)
-$SeederScript$,
-    TRUE,
-    TRUE,
-    5,
-    1,
-    NULL
-) ON CONFLICT (filename) DO UPDATE SET
-    name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    content = EXCLUDED.content,
-    execution_order = EXCLUDED.execution_order,
-    version = EXCLUDED.version,
-    is_active = EXCLUDED.is_active,
-    updated_at = CURRENT_TIMESTAMP;
-
--- ============================================================================
--- Ingresso em Dominio AD (ordem 6) - core_domain.sh
+-- Ingresso em Dominio AD (ordem 4) - core_domain.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Ingresso em Dominio AD',
     'core_domain.sh',
-    'Ingresso no Active Directory via SSSD/Winbind.',
+    'Ingressa a estacao no Active Directory (SSSD/Winbind com fallback).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_domain.sh
@@ -1297,43 +925,62 @@ echo ">>> Ticket Kerberos obtido com sucesso!"
 JOIN_OK=false
 JOIN_METHOD=""
 
-# --- Metodo 1: realm join (SSSD) ---
-echo ">>> Ingressando no dominio via realm join (SSSD)..."
-if echo "$ADMIN_PASSWORD" | realm join "$DOMINIO" \
-    --user="$ADMIN_USERNAME" \
-    --computer-ou="$OU_PADRAO" \
-    --verbose 2>&1; then
+# Verificar se já está no domínio
+REALM_LIST=$(realm list 2>/dev/null | grep -c "$DOMINIO" || true)
+if [ "$REALM_LIST" -gt 0 ]; then
+    echo ">>> Maquina ja esta associada ao dominio $DOMINIO."
+    read -p ">>> Deseja remover e reingressar? (S/n): " REJOIN
+    if [[ "$REJOIN" =~ ^[Nn]$ ]]; then
+        echo ">>> Mantendo associacao existente. Prosseguindo..."
+        JOIN_OK=true
+        JOIN_METHOD="sssd"
+    else
+        echo ">>> Removendo associacao anterior..."
+        realm leave "$DOMINIO" -U "$ADMIN_USERNAME" 2>/dev/null || true
+        net ads leave -U "$ADMIN_USERNAME" 2>/dev/null || true
+    fi
+fi
 
-    JOIN_OK=true
-    JOIN_METHOD="sssd"
-    echo ">>> Ingresso via SSSD (realm join) bem-sucedido!"
+# --- Metodo 1: realm join (SSSD) ---
+if [ "$JOIN_OK" != "true" ]; then
+    echo ">>> Ingressando no dominio via realm join (SSSD)..."
+    if echo "$ADMIN_PASSWORD" | realm join "$DOMINIO" \
+        --user="$ADMIN_USERNAME" \
+        --computer-ou="$OU_PADRAO" \
+        --verbose 2>&1; then
+        JOIN_OK=true
+        JOIN_METHOD="sssd"
+        echo ">>> Ingresso via SSSD (realm join) bem-sucedido!"
+    else
+        echo ">>> realm join falhou."
+    fi
 fi
 
 # --- Metodo 2: net ads join (Winbind) ---
 if [ "$JOIN_OK" != "true" ]; then
-    echo ">>> realm join falhou. Tentando fallback com net ads join (Winbind)..."
+    echo ">>> Tentando fallback com net ads join (Winbind)..."
 
-    # Garantir kerberos method no smb.conf (necessario para keytab)
     if ! grep -q "kerberos method" /etc/samba/smb.conf; then
         sed -i '/\[global\]/a\    kerberos method = secrets and keytab' /etc/samba/smb.conf
     fi
 
+    DC_FQDN="dc-${OM_ACRONYM,,}.${DOMINIO}"
     if echo "$ADMIN_PASSWORD" | net ads join "$DOMINIO" \
         -U "$ADMIN_USERNAME" \
+        -S "$DC_FQDN" \
         createcomputer="$OU_PADRAO" 2>&1; then
-
         JOIN_OK=true
         JOIN_METHOD="winbind"
         echo ">>> Ingresso via Winbind (net ads join) bem-sucedido!"
 
-        # Gerar keytab manualmente (obrigatorio para Winbind)
         net ads keytab create -U "$ADMIN_USERNAME" -P "$ADMIN_PASSWORD" 2>/dev/null || {
-            echo ">>> AVISO: Falha ao gerar keytab. Tentando com adcli..."
             echo "$ADMIN_PASSWORD" | adcli join "$DOMINIO" \
                 --login-user="$ADMIN_USERNAME" \
                 --domain-ou="$OU_PADRAO" \
                 --stdin-password 2>&1 || true
         }
+    else
+        echo ">>> net ads join falhou."
     fi
 fi
 
@@ -1345,6 +992,7 @@ if [ "$JOIN_OK" != "true" ]; then
         echo ">>> Instalacao abortada pelo usuario."
         exit 1
     fi
+    JOIN_METHOD="nenhum"
 fi
 
 # ============================================================
@@ -1480,7 +1128,7 @@ echo "============================================================="
 $SeederScript$,
     TRUE,
     TRUE,
-    6,
+    4,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -1492,99 +1140,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
--- ============================================================================
--- Configuracao SSH (ordem 7) - core_ssh.sh
--- ============================================================================
-INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
-VALUES (
-    'Configuracao SSH',
-    'core_ssh.sh',
-    'Configura servidor SSH.',
-    $SeederScript$#!/bin/bash
-# ============================================================================
-# Core Script: core_ssh.sh
-# SeederLinux Lite - Configuracao SSH (porta, AllowGroups)
-# Executado APOS o ingresso no AD para que os grupos do dominio existam.
-# ============================================================================
-
-set -e
-
-echo "============================================================"
-echo "07 - Configurar SSH"
-echo "============================================================"
-
-SSH_PORT="{{SSH_PORT}}"
-SSH_GROUPS="{{SSH_GROUPS}}"
-
-echo ">>> Porta SSH: ${SSH_PORT:-22}"
-echo ">>> Grupos SSH: ${SSH_GROUPS:-nenhum}"
-
-# Configurar porta
-if [ -n "$SSH_PORT" ] && [ "$SSH_PORT" != "" ] && [ "$SSH_PORT" != "22" ]; then
-    echo ">>> Configurando porta SSH: $SSH_PORT"
-    if [ -f /etc/ssh/sshd_config ]; then
-        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak.$(date +%Y%m%d%H%M%S) 2>/dev/null || true
-        sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
-        echo ">>> Porta SSH alterada para $SSH_PORT"
-    fi
-fi
-
-# Configurar AllowGroups
-if [ -n "$SSH_GROUPS" ] && [ "$SSH_GROUPS" != "" ]; then
-    echo ">>> Configurando AllowGroups: $SSH_GROUPS"
-    if [ -f /etc/ssh/sshd_config ]; then
-        IFS=$'\n,' read -ra GRP_ARRAY <<< "$SSH_GROUPS"
-        GRP_LIST=""
-        for GRP in "${GRP_ARRAY[@]}"; do
-            GRP=$(echo "$GRP" | xargs)
-            if [ -n "$GRP" ] && [ "$GRP" != "" ]; then
-                if [ -z "$GRP_LIST" ]; then
-                    GRP_LIST="$GRP"
-                else
-                    GRP_LIST="$GRP_LIST $GRP"
-                fi
-            fi
-        done
-        if [ -n "$GRP_LIST" ]; then
-            sed -i "s/^#*AllowGroups .*/AllowGroups $GRP_LIST/" /etc/ssh/sshd_config
-            if ! grep -q "^AllowGroups " /etc/ssh/sshd_config; then
-                echo "AllowGroups $GRP_LIST" >> /etc/ssh/sshd_config
-            fi
-            echo ">>> AllowGroups configurado: $GRP_LIST"
-        fi
-    fi
-fi
-
-# Reiniciar SSH
-if [ -f /etc/ssh/sshd_config ]; then
-    systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
-fi
-
-echo ">>> [07] SSH configurado!"
-echo "============================================================"
-$SeederScript$,
-    TRUE,
-    TRUE,
-    7,
-    1,
-    NULL
-) ON CONFLICT (filename) DO UPDATE SET
-    name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    content = EXCLUDED.content,
-    execution_order = EXCLUDED.execution_order,
-    version = EXCLUDED.version,
-    is_active = EXCLUDED.is_active,
-    updated_at = CURRENT_TIMESTAMP;
 
 -- ============================================================================
--- Configuracao de Navegador (ordem 8) - core_browser.sh
+-- Configuracao de Navegador (ordem 5) - core_browser.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Configuracao de Navegador',
     'core_browser.sh',
-    'Configura navegador padrao.',
+    'Configura Firefox ESR e Chrome (homepage, proxy, bookmarks) via politicas corporativas.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_browser.sh
@@ -1789,7 +1353,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    8,
+    5,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -1801,14 +1365,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Agente de Inventario OCS (ordem 9) - core_inventory.sh
+-- Agente de Inventario OCS (ordem 6) - core_inventory.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Agente de Inventario OCS',
     'core_inventory.sh',
-    'Configura agente OCS Inventory.',
+    'Configura OCS Inventory Agent (sem apt-get; pacote instalado em core_packages.sh).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_inventory.sh
@@ -1930,7 +1495,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    9,
+    6,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -1942,14 +1507,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Configuracao de Impressoras (ordem 10) - core_printers.sh
+-- Configuracao de Impressoras (ordem 7) - core_printers.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Configuracao de Impressoras',
     'core_printers.sh',
-    'Configura impressoras.',
+    'Configura CUPS e impressoras via servidor remoto.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_printers.sh
@@ -2098,7 +1664,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    10,
+    7,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -2110,14 +1676,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Configuracao VNC (ordem 11) - core_vnc.sh
+-- Configuracao VNC (ordem 8) - core_vnc.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Configuracao VNC',
     'core_vnc.sh',
-    'Configura acesso VNC.',
+    'Configura x11vnc para acesso remoto assistido.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_vnc.sh
@@ -2273,7 +1840,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    11,
+    8,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -2285,14 +1852,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Configuracao de Conky (ordem 12) - core_conky.sh
+-- Configuracao de Conky (ordem 9) - core_conky.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Configuracao de Conky',
     'core_conky.sh',
-    'Configura Conky (monitor de sistema).',
+    'Configura o Conky (monitor de sistema no desktop) com perfil dinamico via JSON.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_conky.sh
@@ -2541,7 +2109,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    12,
+    9,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -2553,14 +2121,393 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Configuracoes Adicionais (ordem 13) - core_config.sh
+-- Instalacao de Aplicacoes Extras (ordem 10) - core_apps.sh
+-- ============================================================================
+INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
+VALUES (
+    'Instalacao de Aplicacoes Extras',
+    'core_apps.sh',
+    'Instala aplicacoes extras (OnlyOffice, Chrome, etc).',
+    $SeederScript$#!/bin/bash
+# ============================================================================
+# Core Script: core_apps.sh
+# SeederLinux Lite - OnlyOffice, Chrome, Firefox ESR
+# ============================================================================
+# Instala aplicativos adicionais: OnlyOffice Desktop Editors, Google Chrome
+# estavel e Firefox ESR.
+# Os placeholders VARIAVEL são substituídos automaticamente
+# pelo sistema na geração do bundle.
+# ============================================================================
+
+(
+set -e
+
+echo "============================================================"
+echo "10 - Instalar aplicativos (Chrome, OnlyOffice via .deb/wget)"
+echo "============================================================"
+
+# ============================================================
+# Variáveis
+# ============================================================
+INSTALL_ONLYOFFICE="{{INSTALL_ONLYOFFICE}}"
+INSTALL_CHROME="{{INSTALL_CHROME}}"
+INSTALL_CHROMIUM="{{INSTALL_CHROMIUM}}"
+BASE_URL="{{BASE_URL}}"
+PROXY_MODE="{{PROXY_MODE}}"
+PROXY_HTTP="{{PROXY_HTTP}}"
+PROXY_PORTA="{{PROXY_PORTA}}"
+
+echo ">>> Instalar OnlyOffice: $INSTALL_ONLYOFFICE"
+echo ">>> Instalar Chrome: $INSTALL_CHROME"
+echo ">>> Instalar Chromium: $INSTALL_CHROMIUM"
+
+# ============================================================
+# Verificar se pelo menos um toggle esta ativo
+# ============================================================
+if [ "$INSTALL_ONLYOFFICE" != "true" ] && [ "$INSTALL_CHROME" != "true" ] && [ "$INSTALL_CHROMIUM" != "true" ]; then
+    echo ">>> Instalacao de apps desativada. Pulando."
+    echo ">>> [10] Aplicativos nao instalados (desativado)."
+    echo "============================================================"
+    exit 0
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+# Configurar proxy para downloads se necessario
+if [ "$PROXY_MODE" = "MANUAL" ] && [ -n "$PROXY_HTTP" ] && [ "$PROXY_HTTP" != "" ]; then
+    export http_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
+    export https_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
+fi
+
+# ============================================================
+# Google Chrome (instalado via .deb/wget, nao via apt-get)
+# ============================================================
+if [ "$INSTALL_CHROME" = "true" ]; then
+    echo ">>> Instalando Google Chrome..."
+    CHROME_DEB="/tmp/google-chrome-stable.deb"
+
+    # Baixar Chrome
+    if wget -q -O "$CHROME_DEB" "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"; then
+        apt-get install -y "$CHROME_DEB" || {
+            echo ">>> AVISO: Falha ao instalar Google Chrome. Tentando dependencias..."
+            apt-get install -y -f
+            apt-get install -y "$CHROME_DEB" || {
+                echo ">>> AVISO: Google Chrome nao instalado."
+            }
+        }
+        rm -f "$CHROME_DEB"
+    else
+        echo ">>> AVISO: Nao foi possivel baixar Google Chrome."
+        echo ">>> Verifique conectividade e configuracao de proxy."
+    fi
+else
+    echo ">>> Google Chrome desativado (INSTALL_CHROME=false). Pulando."
+fi
+
+# ============================================================
+# Chromium (via apt-get)
+# ============================================================
+if [ "$INSTALL_CHROMIUM" = "true" ]; then
+    echo ">>> Instalando Chromium..."
+    apt-get install -y chromium 2>/dev/null || apt-get install -y chromium-browser 2>/dev/null || {
+        echo ">>> AVISO: Nao foi possivel instalar Chromium."
+    }
+else
+    echo ">>> Chromium desativado (INSTALL_CHROMIUM=false). Pulando."
+fi
+
+# ============================================================
+# OnlyOffice Desktop Editors
+# ============================================================
+if [ "$INSTALL_ONLYOFFICE" = "true" ]; then
+    echo ">>> Instalando OnlyOffice Desktop Editors..."
+
+# Metodo 1: Via repositorio APT oficial
+ONLYOFFICE_KEY="/tmp/onlyoffice-key.asc"
+ONLYOFFICE_REPO_LIST="/etc/apt/sources.list.d/onlyoffice.list"
+
+# Baixar e adicionar chave GPG
+if wget -q -O "$ONLYOFFICE_KEY" "https://download.onlyoffice.com/GPG-KEY-ONLYOFFICE"; then
+    gpg --dearmor < "$ONLYOFFICE_KEY" > /usr/share/keyrings/onlyoffice-keyring.gpg 2>/dev/null || \
+        apt-key add "$ONLYOFFICE_KEY" 2>/dev/null || true
+
+    cat > "$ONLYOFFICE_REPO_LIST" <<EOF
+deb [signed-by=/usr/share/keyrings/onlyoffice-keyring.gpg] https://download.onlyoffice.com/repo/debian squeeze main
+EOF
+
+    apt-get update
+    apt-get install -y onlyoffice-desktopeditors || {
+        echo ">>> AVISO: Falha ao instalar OnlyOffice via repositorio."
+        echo ">>> Tentando download direto..."
+
+        # Metodo 2: Download direto do .deb
+        ONLYOFFICE_DEB="/tmp/onlyoffice-desktopeditors.deb"
+        if wget -q -O "$ONLYOFFICE_DEB" "https://download.onlyoffice.com/install/desktop/editors/linux/onlyoffice-desktopeditors_amd64.deb"; then
+            apt-get install -y "$ONLYOFFICE_DEB" || {
+                echo ">>> AVISO: Falha ao instalar OnlyOffice via .deb direto."
+            }
+            rm -f "$ONLYOFFICE_DEB"
+        else
+            echo ">>> AVISO: Nao foi possivel baixar OnlyOffice."
+        fi
+    }
+    rm -f "$ONLYOFFICE_KEY"
+else
+    echo ">>> AVISO: Nao foi possivel obter chave do OnlyOffice."
+    echo ">>> Tentando instalar via repositorio Debian..."
+
+    apt-get install -y onlyoffice-desktopeditors 2>/dev/null || {
+            echo ">>> AVISO: OnlyOffice nao disponivel. Instalacao ignorada."
+        }
+    fi
+else
+    echo ">>> OnlyOffice desativado (INSTALL_ONLYOFFICE=false). Pulando."
+fi
+
+# ============================================================
+# Verificar instalacoes
+# ============================================================
+echo ">>> Verificando instalacoes..."
+command -v firefox-esr &> /dev/null && echo ">>> Firefox ESR: OK" || echo ">>> Firefox ESR: NAO INSTALADO"
+command -v google-chrome &> /dev/null && echo ">>> Google Chrome: OK" || echo ">>> Google Chrome: NAO INSTALADO"
+command -v onlyoffice-desktopeditors &> /dev/null && echo ">>> OnlyOffice: OK" || echo ">>> OnlyOffice: NAO INSTALADO"
+
+echo ">>> [10] Aplicativos instalados!"
+echo "============================================================"
+)
+$SeederScript$,
+    TRUE,
+    TRUE,
+    10,
+    1,
+    NULL
+) ON CONFLICT (filename) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    content = EXCLUDED.content,
+    execution_order = EXCLUDED.execution_order,
+    version = EXCLUDED.version,
+    is_active = EXCLUDED.is_active,
+    updated_at = CURRENT_TIMESTAMP;
+
+
+-- ============================================================================
+-- Suporte a Sistemas Legados (ordem 11) - core_legados.sh
+-- ============================================================================
+INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
+VALUES (
+    'Suporte a Sistemas Legados',
+    'core_legados.sh',
+    'Instala Java 8 e Firefox 52 ESR para compatibilidade com sistemas legados.',
+    $SeederScript$#!/bin/bash
+# ============================================================================
+# Core Script: core_legados.sh
+# SeederLinux Lite - Java 8, Firefox 52.7 ESR (sistemas legados)
+# ============================================================================
+# Instala Java 8 (OpenJDK) e/ou Firefox 52.7 ESR para compatibilidade
+# com sistemas legados (applets Java, sistemas antigos da intranet).
+# Cada componente e controlado por seu proprio toggle:
+#   INSTALL_JAVA8     - Instalar Java 8?
+#   INSTALL_FIREFOX52 - Instalar Firefox 52.7 ESR?
+# Os placeholders VARIAVEL sao substituidos automaticamente
+# pelo sistema na geracao do bundle.
+# Executado ANTES de core_domain.sh para evitar erro 407 de proxy.
+# ============================================================================
+
+(
+set -e
+
+echo "============================================================"
+echo "05 - Configurar sistemas legados (Java 8, Firefox 52.7)"
+echo "============================================================"
+
+# ============================================================
+# Variaveis
+# ============================================================
+INSTALL_JAVA8="{{INSTALL_JAVA8}}"
+INSTALL_FIREFOX52="{{INSTALL_FIREFOX52}}"
+BASE_URL="{{BASE_URL}}"
+PROXY_MODE="{{PROXY_MODE}}"
+PROXY_HTTP="{{PROXY_HTTP}}"
+PROXY_PORTA="{{PROXY_PORTA}}"
+JAVA_EXCEPTIONS="{{JAVA_EXCEPTIONS}}"
+
+echo ">>> Instalar Java 8: $INSTALL_JAVA8"
+echo ">>> Instalar Firefox 52.7: $INSTALL_FIREFOX52"
+echo ">>> Excecoes Java: ${JAVA_EXCEPTIONS:-nenhuma}"
+
+# ============================================================
+# Verificar se pelo menos um toggle esta ativo
+# ============================================================
+if [ "$INSTALL_JAVA8" != "true" ] && [ "$INSTALL_FIREFOX52" != "true" ]; then
+    echo ">>> Sistemas legados desativados. Pulando."
+    echo ">>> [05] Sistemas legados nao instalados (desativado)."
+    echo "============================================================"
+    exit 0
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+# Configurar proxy para downloads
+if [ "$PROXY_MODE" = "MANUAL" ] && [ -n "$PROXY_HTTP" ] && [ "$PROXY_HTTP" != "" ]; then
+    export http_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
+    export https_proxy="http://${PROXY_HTTP}:${PROXY_PORTA}"
+fi
+
+# ============================================================
+# Java 8 (OpenJDK 8) - apenas se INSTALL_JAVA8=true
+# ============================================================
+if [ "$INSTALL_JAVA8" = "true" ]; then
+    echo ">>> Instalando Java 8 (OpenJDK 8)..."
+
+    if command -v java &>/dev/null; then
+        JAVA_VERSION=$(java -version 2>&1 | head -1)
+        echo ">>> Java ja instalado: $JAVA_VERSION"
+    else
+        echo ">>> AVISO: Java 8 nao foi instalado no core_packages.sh."
+        echo ">>> Tentando instalar via repositorio Adoptium/Temurin..."
+
+        if wget -q -O /tmp/adoptium-key.asc "https://packages.adoptium.net/artifactory/api/gpg/key/public" 2>/dev/null; then
+            gpg --dearmor < /tmp/adoptium-key.asc > /usr/share/keyrings/adoptium-keyring.gpg 2>/dev/null || true
+            echo "deb [signed-by=/usr/share/keyrings/adoptium-keyring.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" \
+                > /etc/apt/sources.list.d/adoptium.list
+            apt-get update
+            apt-get install -y temurin-8-jre || {
+                echo ">>> AVISO: Falha ao instalar Java 8 via Adoptium."
+            }
+            rm -f /tmp/adoptium-key.asc
+        else
+            echo ">>> AVISO: Nao foi possivel obter chave do repositorio Java 8."
+        fi
+    fi
+
+    # Configurar excecoes Java (deployment.properties) se fornecidas
+    if [ -n "$JAVA_EXCEPTIONS" ] && [ "$JAVA_EXCEPTIONS" != "" ]; then
+        echo ">>> Configurando excecoes Java..."
+        DEPLOY_DIR="/usr/lib/jvm/.deployment"
+        mkdir -p "$DEPLOY_DIR"
+        DEPLOY_FILE="$DEPLOY_DIR/deployment.properties"
+        echo "# Excecoes Java - SeederLinux" > "$DEPLOY_FILE"
+        echo "deployment.security.level=MEDIUM" >> "$DEPLOY_FILE"
+
+        IFS=$'\n,' read -ra EXC_URLS <<< "$JAVA_EXCEPTIONS"
+        IDX=0
+        for EXC_URL in "${EXC_URLS[@]}"; do
+            EXC_URL=$(echo "$EXC_URL" | xargs)
+            if [ -n "$EXC_URL" ] && [ "$EXC_URL" != "" ]; then
+                echo "javaws.allow.${IDX}=$EXC_URL" >> "$DEPLOY_FILE"
+                IDX=$((IDX+1))
+            fi
+        done
+        echo ">>> Excecoes Java configuradas ($IDX URLs)"
+    fi
+
+    if command -v java &>/dev/null; then
+        JAVA_VERSION=$(java -version 2>&1 | head -1)
+        echo ">>> Java instalado: $JAVA_VERSION"
+    else
+        echo ">>> AVISO: Java nao instalado."
+    fi
+else
+    echo ">>> Java 8 desativado (INSTALL_JAVA8=false). Pulando."
+fi
+
+# ============================================================
+# Firefox 52.7 ESR (para applets Java) - apenas se INSTALL_FIREFOX52=true
+# ============================================================
+if [ "$INSTALL_FIREFOX52" = "true" ]; then
+    echo ">>> Instalando Firefox 52.7 ESR..."
+
+    FF_LEGADO_DIR="/opt/firefox-legado"
+    FF_LEGADO_TARBALL="/tmp/firefox-52.7-esr.tar.bz2"
+    FF_LEGADO_URL="${BASE_URL}/downloads/firefox-52.7.3esr.tar.bz2"
+
+    mkdir -p /opt
+
+    if wget -q -O "$FF_LEGADO_TARBALL" "$FF_LEGADO_URL" 2>/dev/null; then
+        echo ">>> Firefox 52.7 baixado do repositorio interno"
+        tar xjf "$FF_LEGADO_TARBALL" -C /opt/
+        mv /opt/firefox "$FF_LEGADO_DIR" 2>/dev/null || true
+        rm -f "$FF_LEGADO_TARBALL"
+    else
+        echo ">>> AVISO: Nao foi possivel baixar Firefox 52.7 do repositorio interno."
+        echo ">>> Tentando download da Mozilla..."
+
+        FF_MOZILLA_URL="https://ftp.mozilla.org/pub/firefox/releases/52.7.3esr/linux-x86_64/en-US/firefox-52.7.3esr.tar.bz2"
+        if wget -q -O "$FF_LEGADO_TARBALL" "$FF_MOZILLA_URL" 2>/dev/null; then
+            tar xjf "$FF_LEGADO_TARBALL" -C /opt/
+            mv /opt/firefox "$FF_LEGADO_DIR" 2>/dev/null || true
+            rm -f "$FF_LEGADO_TARBALL"
+        else
+            echo ">>> AVISO: Nao foi possivel baixar Firefox 52.7."
+        fi
+    fi
+
+    if [ -d "$FF_LEGADO_DIR" ]; then
+        ln -sf "${FF_LEGADO_DIR}/firefox" /usr/local/bin/firefox-legado
+        echo ">>> Firefox 52.7 ESR instalado em: $FF_LEGADO_DIR"
+
+        mkdir -p /usr/share/applications
+        cat > /usr/share/applications/firefox-legado.desktop <<EOF
+[Desktop Entry]
+Version=1.0
+Name=Firefox 52.7 ESR (Legado)
+Comment=Navegador Firefox 52.7 ESR para sistemas legados
+Exec=${FF_LEGADO_DIR}/firefox
+Icon=${FF_LEGADO_DIR}/browser/icons/mozicon128.png
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+EOF
+        echo ">>> Entrada de desktop criada"
+    else
+        echo ">>> AVISO: Firefox 52.7 ESR nao instalado."
+    fi
+
+    echo ">>> Configurando plugin Java para Firefox legado..."
+    if [ -d "$FF_LEGADO_DIR" ] && command -v java &>/dev/null; then
+        JAVA_HOME_DIR=$(dirname $(dirname $(readlink -f $(which java))))
+        PLUGIN_DIR="${FF_LEGADO_DIR}/browser/plugins"
+        mkdir -p "$PLUGIN_DIR"
+
+        find "$JAVA_HOME_DIR" -name "libnpjp2.so" -exec ln -sf {} "$PLUGIN_DIR/libnpjp2.so" \; 2>/dev/null || {
+            echo ">>> AVISO: Plugin Java (libnpjp2.so) nao encontrado."
+        }
+        echo ">>> Plugin Java configurado"
+    fi
+else
+    echo ">>> Firefox 52.7 desativado (INSTALL_FIREFOX52=false). Pulando."
+fi
+
+echo ">>> [05] Sistemas legados configurados!"
+echo "============================================================"
+)
+$SeederScript$,
+    TRUE,
+    TRUE,
+    11,
+    1,
+    NULL
+) ON CONFLICT (filename) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    content = EXCLUDED.content,
+    execution_order = EXCLUDED.execution_order,
+    version = EXCLUDED.version,
+    is_active = EXCLUDED.is_active,
+    updated_at = CURRENT_TIMESTAMP;
+
+
+-- ============================================================================
+-- Configuracoes Adicionais (ordem 12) - core_config.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Configuracoes Adicionais',
     'core_config.sh',
-    'Configuracoes adicionais do sistema.',
+    'Configuracoes diversas do sistema (sysctl, limits, etc).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_config.sh
@@ -2697,7 +2644,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    13,
+    12,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -2709,14 +2656,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Identidade Visual (Branding) (ordem 14) - core_branding.sh
+-- Identidade Visual (Branding) (ordem 13) - core_branding.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Identidade Visual (Branding)',
     'core_branding.sh',
-    'Aplica identidade visual da OM.',
+    'Aplica wallpaper, logo, tema GTK e branding da OM.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_branding.sh
@@ -2755,19 +2703,15 @@ SEEDER_SERVER="{{SEEDER_SERVER}}"
 for url_var in WALLPAPER_URL WALLPAPER_LOGIN_URL LOGO_URL GREETER_URL; do
     url_val="${!url_var}"
     if [ -n "$url_val" ] && [ "$url_val" != "" ]; then
-        case "$url_val" in
-            http://*|https://*) ;;
-            /*)
-                # URL relativa - prefixar com SEEDER_SERVER (sem barra final)
-                server_clean="${SEEDER_SERVER%/}"
-                eval "${url_var}=\"${server_clean}${url_val}\""
-                ;;
-            *)
-                # Nao comeca com / nem http - prefixar com barra
-                server_clean="${SEEDER_SERVER%/}"
-                eval "${url_var}=\"${server_clean}/${url_val}\""
-                ;;
-        esac
+        if echo "$url_val" | grep -qE '^https?://[^/]+/'; then
+            continue
+        fi
+        server_clean="${SEEDER_SERVER%/}"
+        if echo "$url_val" | grep -q '^/'; then
+            eval "${url_var}=\"${server_clean}${url_val}\""
+        else
+            eval "${url_var}=\"${server_clean}/${url_val}\""
+        fi
     fi
 done
 
@@ -3052,7 +2996,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    14,
+    13,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -3064,14 +3008,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Script de Logon Persistente (ordem 15) - core_logon.sh
+-- Script de Logon Persistente (ordem 14) - core_logon.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Script de Logon Persistente',
     'core_logon.sh',
-    'Script de logon executado no inicio da sessao.',
+    'Script executado a cada logon de usuario (multi-DE).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_logon.sh
@@ -3501,7 +3446,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    15,
+    14,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -3513,213 +3458,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
--- ============================================================================
--- Troca de Senha AD (ordem 16) - core_password_change.sh
--- ============================================================================
-INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
-VALUES (
-    'Troca de Senha AD',
-    'core_password_change.sh',
-    'Configura troca de senha do AD.',
-    $SeederScript$#!/bin/bash
-# ============================================================================
-# Core Script: core_password_change.sh
-# SeederLinux Lite - Troca de Senha do Active Directory
-# ============================================================================
-# Instala um aplicativo gráfico (Zenity) para troca de senha no AD.
-# É executado pelo bundle para instalar o script; a troca de senha
-# em si é feita pelo usuário quando desejar.
-# ============================================================================
-
-(
-set -e
-
-echo "============================================================"
-echo "16 - Instalar aplicativo de troca de senha AD"
-echo "============================================================"
-
-INSTALL_PASSWORD_CHANGER="{{INSTALL_PASSWORD_CHANGER}}"
-
-if [ "$INSTALL_PASSWORD_CHANGER" != "true" ]; then
-    echo ">>> Instalacao do trocador de senha desativada. Pulando."
-    echo ">>> [16] Trocador de senha ignorado."
-    echo "============================================================"
-    exit 0
-fi
-
-DOMINIO="{{DOMINIO}}"
-OM_ACRONYM="{{OM_ACRONYM}}"
-
-echo ">>> Instalando aplicativo de troca de senha..."
-
-# Criar o script de troca de senha
-cat > /usr/local/bin/trocar-senha << 'EOFSCRIPT'
-#!/bin/bash
-# ============================================================================
-# Troca de Senha - Active Directory
-# Interface gráfica com Zenity para alteração de senha no domínio
-# ============================================================================
-
-DOMINIO="__DOMINIO__"
-OM_ACRONYM="__OM_ACRONYM__"
-
-trocar_senha() {
-    IFS='|' read -r OldPasswd NewPasswd1 NewPasswd2 <<< \
-    $(zenity --forms --title="Trocar Senha do Usuário" \
-        --text="Usuário: $USER\nDomínio: $DOMINIO" \
-        --add-password="Senha atual" \
-        --add-password="Nova Senha" \
-        --add-password="Confirme a nova senha" \
-        --width=450 \
-        --height=250)
-
-    if [ -z "$OldPasswd" ] || [ -z "$NewPasswd1" ]; then
-        zenity --error --title="Erro" --text="Todos os campos devem ser preenchidos."
-        return 1
-    fi
-
-    while [ "$NewPasswd1" != "$NewPasswd2" ]; do
-        NewPasswd1=$(zenity --entry \
-            --title="Trocar Senha" \
-            --text="As senhas não coincidem!\n\nDigite a nova senha:" \
-            --hide-text \
-            --width=400)
-
-        if [ -z "$NewPasswd1" ]; then
-            zenity --error --title="Erro" --text="Operação cancelada."
-            return 1
-        fi
-
-        NewPasswd2=$(zenity --entry \
-            --title="Trocar Senha" \
-            --text="Confirme a nova senha:" \
-            --hide-text \
-            --width=400)
-    done
-
-    if [ ${#NewPasswd1} -lt 7 ]; then
-        zenity --error \
-            --title="Senha muito curta" \
-            --text="A nova senha deve ter no mínimo 7 caracteres.\n\nRequisitos do Active Directory:\n• Mínimo 7 caracteres\n• Pelo menos 3 dos 4 tipos:\n  - Maiúsculas (A-Z)\n  - Minúsculas (a-z)\n  - Números (0-9)\n  - Símbolos (@#\$% etc)"
-        return 1
-    fi
-
-    DC_ONLINE=""
-    for DC in $(host -t SRV _ldap._tcp.$DOMINIO 2>/dev/null | awk '{print $NF}' | sed 's/\.$//'); do
-        if ping -c 1 -W 2 "$DC" > /dev/null 2>&1; then
-            DC_ONLINE="$DC"
-            break
-        fi
-    done
-
-    if [ -z "$DC_ONLINE" ]; then
-        DC_ONLINE="dc-${OM_ACRONYM,,}.$DOMINIO"
-    fi
-
-    echo -e "$OldPasswd\n$NewPasswd1\n$NewPasswd1" | smbpasswd -r "$DC_ONLINE" -U "$USER" > /tmp/password-change.log 2>&1
-
-    if grep -q "Password changed" /tmp/password-change.log; then
-        zenity --info \
-            --title="Sucesso" \
-            --text="Senha alterada com sucesso!\n\nA nova senha entrará em vigor imediatamente.\nRecomenda-se fazer logoff e login novamente." \
-            --width=400
-        rm -f /tmp/password-change.log
-        return 0
-    else
-        ERRO=$(cat /tmp/password-change.log 2>/dev/null | tail -5)
-        zenity --error \
-            --title="Erro ao trocar senha" \
-            --text="Não foi possível alterar a senha.\n\nMotivos possíveis:\n• Senha atual incorreta\n• Senha nova não atende aos requisitos\n• Controlador de domínio indisponível\n\nDetalhes técnicos:\n$ERRO" \
-            --width=500
-        rm -f /tmp/password-change.log
-        return 1
-    fi
-}
-
-if ! command -v zenity &>/dev/null; then
-    echo "Erro: zenity não está instalado."
-    echo "Execute: sudo apt-get install -y zenity"
-    exit 1
-fi
-
-if ! command -v smbpasswd &>/dev/null; then
-    echo "Erro: smbpasswd não está instalado."
-    echo "Execute: sudo apt-get install -y samba-common-bin"
-    exit 1
-fi
-
-trocar_senha
-
-exit $?
-EOFSCRIPT
-
-# Substituir placeholders no script instalado
-sed -i "s/__DOMINIO__/$DOMINIO/g" /usr/local/bin/trocar-senha
-sed -i "s/__OM_ACRONYM__/$OM_ACRONYM/g" /usr/local/bin/trocar-senha
-
-chmod 755 /usr/local/bin/trocar-senha
-echo ">>> Script de troca de senha instalado em /usr/local/bin/trocar-senha"
-
-# Criar entrada no menu de aplicativos
-cat > /usr/share/applications/trocar-senha.desktop << EOF
-[Desktop Entry]
-Version=1.0
-Name=Trocar Senha
-Name[pt_BR]=Trocar Senha
-Comment=Alterar senha do Active Directory
-Comment[pt_BR]=Alterar senha do Active Directory
-Exec=/usr/local/bin/trocar-senha
-Icon=dialog-password
-Terminal=false
-Type=Application
-Categories=System;Settings;
-StartupNotify=true
-EOF
-
-echo ">>> Atalho no menu criado"
-
-# Criar atalho na área de trabalho (todos os usuários futuros via /etc/skel)
-if [ -d /etc/skel ]; then
-    mkdir -p /etc/skel/Desktop
-    cp /usr/share/applications/trocar-senha.desktop /etc/skel/Desktop/
-    chmod +x /etc/skel/Desktop/trocar-senha.desktop 2>/dev/null || true
-fi
-
-# Criar atalho para usuários existentes com diretório home em /home
-for USER_HOME in /home/*/; do
-    if [ -d "${USER_HOME}Desktop" ]; then
-        cp /usr/share/applications/trocar-senha.desktop "${USER_HOME}Desktop/"
-        chmod +x "${USER_HOME}Desktop/trocar-senha.desktop" 2>/dev/null || true
-    fi
-done
-
-echo ">>> Atalhos na area de trabalho criados"
-echo ">>> [16] Aplicativo de troca de senha instalado!"
-echo "============================================================"
-)
-$SeederScript$,
-    TRUE,
-    TRUE,
-    16,
-    1,
-    NULL
-) ON CONFLICT (filename) DO UPDATE SET
-    name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    content = EXCLUDED.content,
-    execution_order = EXCLUDED.execution_order,
-    version = EXCLUDED.version,
-    is_active = EXCLUDED.is_active,
-    updated_at = CURRENT_TIMESTAMP;
 
 -- ============================================================================
--- Script de Logoff Persistente (ordem 17) - core_logoff.sh
+-- Script de Logoff Persistente (ordem 15) - core_logoff.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Script de Logoff Persistente',
     'core_logoff.sh',
-    'Script de logoff executado no fim da sessao.',
+    'Script executado a cada logoff de usuario.',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_logoff.sh
@@ -3923,7 +3670,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    17,
+    15,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -3935,14 +3682,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Sessao LightDM (ordem 18) - core_session_lightdm.sh
+-- Sessao LightDM (ordem 16) - core_session_lightdm.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Sessao LightDM',
     'core_session_lightdm.sh',
-    'Configura LightDM como display manager.',
+    'Configura LightDM como display manager (autoselecao via DISPLAY_MANAGER=lightdm).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_session_lightdm.sh
@@ -4093,7 +3841,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    18,
+    16,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -4105,14 +3853,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Sessao GDM3 (ordem 19) - core_session_gdm3.sh
+-- Sessao GDM3 (ordem 16) - core_session_gdm3.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Sessao GDM3',
     'core_session_gdm3.sh',
-    'Configura GDM3 como display manager.',
+    'Configura GDM3 como display manager (autoselecao via DISPLAY_MANAGER=gdm3).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_session_gdm3.sh
@@ -4259,7 +4008,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    19,
+    16,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -4271,14 +4020,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
 -- ============================================================================
--- Sessao SDDM (ordem 20) - core_session_sddm.sh
+-- Sessao SDDM (ordem 16) - core_session_sddm.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Sessao SDDM',
     'core_session_sddm.sh',
-    'Configura SDDM como display manager.',
+    'Configura SDDM como display manager (autoselecao via DISPLAY_MANAGER=sddm).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_session_sddm.sh
@@ -4428,7 +4178,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    20,
+    16,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -4440,105 +4190,15 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
--- ============================================================================
--- Agente de Check-in (ordem 21) - core_agent.sh
--- ============================================================================
-INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
-VALUES (
-    'Agente de Check-in',
-    'core_agent.sh',
-    'Instala agente de check-in periodico.',
-    $SeederScript$#!/bin/bash
-# ============================================================================
-# Core Script: core_agent.sh
-# SeederLinux Lite - Instalacao do agente de check-in periodico
-# ============================================================================
-# Baixa o agent.py do servidor, configura cron a cada 15 minutos e
-# executa o primeiro check-in em background.
-# ============================================================================
-
-(
-set -e
-
-echo "============================================================"
-echo "18 - Instalar agente de check-in (seeder-agent)"
-echo "============================================================"
-
-INSTALL_AGENT="{{INSTALL_AGENT}}"
-if [ "$INSTALL_AGENT" != "true" ]; then
-    echo ">>> Instalacao do agente desativada (INSTALL_AGENT=false). Pulando."
-    echo "============================================================"
-    exit 0
-fi
-
-SEEDER_SERVER="{{SEEDER_SERVER}}"
-OM_ACRONYM="{{OM_ACRONYM}}"
-AGENT_NO_CHECK_CERT="{{AGENT_NO_CHECK_CERT}}"
-
-echo ">>> Servidor: $SEEDER_SERVER"
-echo ">>> Organizacao: $OM_ACRONYM"
-
-# Baixar o agente
-mkdir -p /usr/local/bin
-if wget -q -O /usr/local/bin/seeder-agent "${SEEDER_SERVER}/downloads/agent.py"; then
-    # Verificar que o arquivo nao esta vazio
-    if [ ! -s /usr/local/bin/seeder-agent ]; then
-        echo ">>> ERRO: Agente baixado mas arquivo esta vazio. Verifique $SEEDER_SERVER"
-        echo "============================================================"
-        exit 1
-    fi
-    chmod 755 /usr/local/bin/seeder-agent
-    echo ">>> Agente baixado com sucesso"
-else
-    echo ">>> ERRO: Falha ao baixar o agente. Verifique conectividade com $SEEDER_SERVER"
-    echo "============================================================"
-    exit 1
-fi
-
-# Criar configuracao
-mkdir -p /etc/seeder
-cat > /etc/seeder/agent.conf <<EOF
-[server]
-url = ${SEEDER_SERVER}
-no_check_certificate = ${AGENT_NO_CHECK_CERT}
-EOF
-
-# Configurar cron
-cat > /etc/cron.d/seeder-agent <<EOF
-# SeederLinux Agent - check-in a cada 15 minutos
-*/15 * * * * root /usr/local/bin/seeder-agent --no-check-certificate >> /var/log/seeder/agent.log 2>&1
-EOF
-
-# Primeiro check-in (em background, sem bloquear o bundle)
-echo ">>> Executando primeiro check-in em background..."
-nohup /usr/local/bin/seeder-agent --org "$OM_ACRONYM" --no-check-certificate > /tmp/seeder-first-checkin.log 2>&1 &
-
-echo ">>> [18] Agente instalado e agendado!"
-echo "============================================================"
-)
-$SeederScript$,
-    TRUE,
-    TRUE,
-    21,
-    1,
-    NULL
-) ON CONFLICT (filename) DO UPDATE SET
-    name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    content = EXCLUDED.content,
-    execution_order = EXCLUDED.execution_order,
-    version = EXCLUDED.version,
-    is_active = EXCLUDED.is_active,
-    updated_at = CURRENT_TIMESTAMP;
 
 -- ============================================================================
--- Configuracao de Proxy (ordem 22) - core_proxy.sh
+-- Configuracao de Proxy (ordem 17) - core_proxy.sh
 -- ============================================================================
 INSERT INTO scripts (name, filename, description, content, is_core, is_active, execution_order, version, organization_id)
 VALUES (
     'Configuracao de Proxy',
     'core_proxy.sh',
-    'Configura proxy do sistema.',
+    'Configura proxy corporativo no sistema (apt, curl, wget, env).',
     $SeederScript$#!/bin/bash
 # ============================================================================
 # Core Script: core_proxy.sh
@@ -4671,7 +4331,7 @@ echo "============================================================"
 $SeederScript$,
     TRUE,
     TRUE,
-    22,
+    17,
     1,
     NULL
 ) ON CONFLICT (filename) DO UPDATE SET
@@ -4683,3 +4343,26 @@ $SeederScript$,
     is_active = EXCLUDED.is_active,
     updated_at = CURRENT_TIMESTAMP;
 
+
+
+-- ============================================================================
+-- FIM: 19 scripts core inseridos.
+-- Ordem de execucao:
+--   01 core_dns.sh              (configura DNS ANTES de apt-get update)
+--   02 core_repositories.sh     (agora tem DNS resolvendo)
+--   03 core_packages.sh
+--   04 core_domain.sh
+--   05 core_browser.sh
+--   06 core_inventory.sh
+--   07 core_printers.sh
+--   08 core_vnc.sh
+--   09 core_conky.sh
+--   10 core_apps.sh
+--   11 core_legados.sh
+--   12 core_config.sh
+--   13 core_branding.sh
+--   14 core_logon.sh
+--   15 core_logoff.sh
+--   16 core_session_{lightdm|gdm3|sddm}.sh   (bundle mantem apenas 1 conforme DISPLAY_MANAGER)
+--   17 core_proxy.sh
+-- ============================================================================

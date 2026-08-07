@@ -36,19 +36,15 @@ SEEDER_SERVER="{{SEEDER_SERVER}}"
 for url_var in WALLPAPER_URL WALLPAPER_LOGIN_URL LOGO_URL GREETER_URL; do
     url_val="${!url_var}"
     if [ -n "$url_val" ] && [ "$url_val" != "" ]; then
-        case "$url_val" in
-            http://*|https://*) ;;
-            /*)
-                # URL relativa - prefixar com SEEDER_SERVER (sem barra final)
-                server_clean="${SEEDER_SERVER%/}"
-                eval "${url_var}=\"${server_clean}${url_val}\""
-                ;;
-            *)
-                # Nao comeca com / nem http - prefixar com barra
-                server_clean="${SEEDER_SERVER%/}"
-                eval "${url_var}=\"${server_clean}/${url_val}\""
-                ;;
-        esac
+        if echo "$url_val" | grep -qE '^https?://[^/]+/'; then
+            continue
+        fi
+        server_clean="${SEEDER_SERVER%/}"
+        if echo "$url_val" | grep -q '^/'; then
+            eval "${url_var}=\"${server_clean}${url_val}\""
+        else
+            eval "${url_var}=\"${server_clean}/${url_val}\""
+        fi
     fi
 done
 

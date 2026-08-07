@@ -180,43 +180,62 @@ echo ">>> Ticket Kerberos obtido com sucesso!"
 JOIN_OK=false
 JOIN_METHOD=""
 
-# --- Metodo 1: realm join (SSSD) ---
-echo ">>> Ingressando no dominio via realm join (SSSD)..."
-if echo "$ADMIN_PASSWORD" | realm join "$DOMINIO" \
-    --user="$ADMIN_USERNAME" \
-    --computer-ou="$OU_PADRAO" \
-    --verbose 2>&1; then
+# Verificar se já está no domínio
+REALM_LIST=$(realm list 2>/dev/null | grep -c "$DOMINIO" || true)
+if [ "$REALM_LIST" -gt 0 ]; then
+    echo ">>> Maquina ja esta associada ao dominio $DOMINIO."
+    read -p ">>> Deseja remover e reingressar? (S/n): " REJOIN
+    if [[ "$REJOIN" =~ ^[Nn]$ ]]; then
+        echo ">>> Mantendo associacao existente. Prosseguindo..."
+        JOIN_OK=true
+        JOIN_METHOD="sssd"
+    else
+        echo ">>> Removendo associacao anterior..."
+        realm leave "$DOMINIO" -U "$ADMIN_USERNAME" 2>/dev/null || true
+        net ads leave -U "$ADMIN_USERNAME" 2>/dev/null || true
+    fi
+fi
 
-    JOIN_OK=true
-    JOIN_METHOD="sssd"
-    echo ">>> Ingresso via SSSD (realm join) bem-sucedido!"
+# --- Metodo 1: realm join (SSSD) ---
+if [ "$JOIN_OK" != "true" ]; then
+    echo ">>> Ingressando no dominio via realm join (SSSD)..."
+    if echo "$ADMIN_PASSWORD" | realm join "$DOMINIO" \
+        --user="$ADMIN_USERNAME" \
+        --computer-ou="$OU_PADRAO" \
+        --verbose 2>&1; then
+        JOIN_OK=true
+        JOIN_METHOD="sssd"
+        echo ">>> Ingresso via SSSD (realm join) bem-sucedido!"
+    else
+        echo ">>> realm join falhou."
+    fi
 fi
 
 # --- Metodo 2: net ads join (Winbind) ---
 if [ "$JOIN_OK" != "true" ]; then
-    echo ">>> realm join falhou. Tentando fallback com net ads join (Winbind)..."
+    echo ">>> Tentando fallback com net ads join (Winbind)..."
 
-    # Garantir kerberos method no smb.conf (necessario para keytab)
     if ! grep -q "kerberos method" /etc/samba/smb.conf; then
         sed -i '/\[global\]/a\    kerberos method = secrets and keytab' /etc/samba/smb.conf
     fi
 
+    DC_FQDN="dc-${OM_ACRONYM,,}.${DOMINIO}"
     if echo "$ADMIN_PASSWORD" | net ads join "$DOMINIO" \
         -U "$ADMIN_USERNAME" \
+        -S "$DC_FQDN" \
         createcomputer="$OU_PADRAO" 2>&1; then
-
         JOIN_OK=true
         JOIN_METHOD="winbind"
         echo ">>> Ingresso via Winbind (net ads join) bem-sucedido!"
 
-        # Gerar keytab manualmente (obrigatorio para Winbind)
         net ads keytab create -U "$ADMIN_USERNAME" -P "$ADMIN_PASSWORD" 2>/dev/null || {
-            echo ">>> AVISO: Falha ao gerar keytab. Tentando com adcli..."
             echo "$ADMIN_PASSWORD" | adcli join "$DOMINIO" \
                 --login-user="$ADMIN_USERNAME" \
                 --domain-ou="$OU_PADRAO" \
                 --stdin-password 2>&1 || true
         }
+    else
+        echo ">>> net ads join falhou."
     fi
 fi
 
@@ -228,6 +247,7 @@ if [ "$JOIN_OK" != "true" ]; then
         echo ">>> Instalacao abortada pelo usuario."
         exit 1
     fi
+    JOIN_METHOD="nenhum"
 fi
 
 # ============================================================
