@@ -7,7 +7,7 @@ let currentUser = null;
 let currentOrgId = null;
 let organizations = [];
 let allVariables = [];
-let activeCategory = 'Todas';
+let activeCategory = 'identidade';
 let uploadedImages = { wallpapers: [], logos: [] };
 let scriptTab = 'Core';
 
@@ -28,6 +28,94 @@ const categoryOrder = [
     'arquivos', 'impressoras', 'inventario', 'aplicacoes',
     'acesso_remoto', 'certificados', 'seguranca', 'avancado', 'agente', 'generic', 'custom'
 ];
+
+// ============ SUPER CATEGORIES (7 screens) ============
+// Groups the 18 original categories into 7 screens by affinity.
+// Variables are NOT removed or renamed — only regrouped visually.
+const superCategoryOrder = [
+    'identidade', 'rede_proxy', 'dominio_ad', 'repositorios',
+    'seguranca_agente', 'aplicacoes_nav', 'estacoes_perifericos'
+];
+
+const superCategoryLabels = {
+    'identidade': 'Identidade e Personalizacao',
+    'rede_proxy': 'Rede e Proxy',
+    'dominio_ad': 'Dominio e Autenticacao AD',
+    'repositorios': 'Repositorios e Distribuicoes',
+    'seguranca_agente': 'Seguranca, Certificados e Agente',
+    'aplicacoes_nav': 'Aplicacoes e Navegadores',
+    'estacoes_perifericos': 'Estacoes, Perifericos e Monitoramento'
+};
+
+// Map original category -> super category
+const categoryToSuper = {
+    'branding': 'identidade',
+    'assets': 'identidade',
+    'ambiente': 'identidade',
+    'rede': 'rede_proxy',
+    'proxy': 'rede_proxy',
+    'dominio': 'dominio_ad',
+    'repositorios': 'repositorios',
+    'seguranca': 'seguranca_agente',
+    'certificados': 'seguranca_agente',
+    'avancado': 'seguranca_agente',
+    'agente': 'seguranca_agente',
+    'aplicacoes': 'aplicacoes_nav',
+    'navegador': 'aplicacoes_nav',
+    'impressoras': 'estacoes_perifericos',
+    'arquivos': 'estacoes_perifericos',
+    'inventario': 'estacoes_perifericos',
+    'acesso_remoto': 'estacoes_perifericos',
+    'monitoramento': 'estacoes_perifericos',
+    'generic': 'estacoes_perifericos',
+    'custom': 'estacoes_perifericos'
+};
+
+// Within each super category, define sub-section headers and which original categories belong
+const superCategorySections = {
+    'identidade': [
+        { title: 'Identidade da OM', categories: ['branding'] },
+        { title: 'Identidade Visual & Assets', categories: ['assets'] },
+        { title: 'Ambiente Grafico', categories: ['ambiente'] }
+    ],
+    'rede_proxy': [
+        { title: 'Configuracoes de Rede', categories: ['rede'] },
+        { title: 'Proxy', categories: ['proxy'] },
+        { title: 'Excecoes e PAC (Navegador)', categories: ['navegador'] }
+    ],
+    'dominio_ad': [
+        { title: 'Dominio e Autenticacao AD', categories: ['dominio'] }
+    ],
+    'repositorios': [
+        { title: 'Repositorios e Distribuicoes', categories: ['repositorios'] }
+    ],
+    'seguranca_agente': [
+        { title: 'Certificados', categories: ['certificados', 'avancado'] },
+        { title: 'Agente', categories: ['agente'] },
+        { title: 'Seguranca e Grupos sudo', categories: ['seguranca'] }
+    ],
+    'aplicacoes_nav': [
+        { title: 'Navegadores', categories: ['navegador'] },
+        { title: 'Aplicacoes e Ferramentas', categories: ['aplicacoes'] }
+    ],
+    'estacoes_perifericos': [
+        { title: 'Impressoras', categories: ['impressoras'] },
+        { title: 'Arquivos Compartilhados', categories: ['arquivos'] },
+        { title: 'Inventario', categories: ['inventario'] },
+        { title: 'Acesso Remoto', categories: ['acesso_remoto'] },
+        { title: 'Monitoramento (Conky)', categories: ['monitoramento'] },
+        { title: 'Outras Variaveis', categories: ['generic', 'custom'] }
+    ]
+};
+
+// Variables that should appear in a different super category than their original category maps to.
+// NO_PROXY, PAC_URL, PROXY_MODE belong in Rede e Proxy (not Aplicacoes/Navegadores).
+const variableSuperOverride = {
+    'NO_PROXY': 'rede_proxy',
+    'PAC_URL': 'rede_proxy',
+    'PROXY_MODE': 'rede_proxy',
+    'HOMEPAGE': 'aplicacoes_nav'
+};
 
 // Campos dependentes: chave = var pai, valor = lista de vars que aparecem apenas se pai=true
 const dependentFields = {
@@ -616,7 +704,7 @@ async function loadVariables(orgId) {
     }
 
     allVariables = res.data.variables || [];
-    activeCategory = 'Todas';
+    activeCategory = 'identidade';
     renderVariables(allVariables);
 
     try {
@@ -653,46 +741,71 @@ function renderVariables(vars) {
         }
     });
 
-    const cats = [...new Set(vars.map(v => v.category || 'generic'))].sort((a, b) => {
-        const ai = categoryOrder.indexOf(a);
-        const bi = categoryOrder.indexOf(b);
-        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    // Assign each variable to a super category bucket
+    const superBuckets = {};
+    superCategoryOrder.forEach(sc => { superBuckets[sc] = []; });
+
+    vars.forEach(v => {
+        if (hiddenNames.has(v.name)) return;
+        const sc = variableSuperOverride[v.name] || categoryToSuper[v.category || 'generic'] || 'estacoes_perifericos';
+        superBuckets[sc].push(v);
     });
 
+    // Only show super categories that have variables
+    const activeSuperCats = superCategoryOrder.filter(sc => superBuckets[sc].length > 0);
+
+    // Default to first available if current selection is invalid
+    if (!activeCategory || !superBuckets[activeCategory] || superBuckets[activeCategory].length === 0) {
+        activeCategory = activeSuperCats[0] || 'identidade';
+    }
+
+    // Build super category tabs
     let html = '<div class="category-tabs">';
-    html += `<button class="cat-tab ${activeCategory === 'Todas' ? 'active' : ''}" onclick="filterByCategory('Todas')">Todas</button>`;
-    cats.forEach(c => {
-        html += `<button class="cat-tab ${activeCategory === c ? 'active' : ''}" onclick="filterByCategory('${Utils.escapeHtml(c)}')">${categoryLabels[c] || c}</button>`;
+    activeSuperCats.forEach(sc => {
+        html += `<button class="cat-tab ${activeCategory === sc ? 'active' : ''}" onclick="filterByCategory('${Utils.escapeHtml(sc)}')">${superCategoryLabels[sc] || sc}</button>`;
     });
     html += '</div>';
 
-    let filtered = activeCategory === 'Todas' ? vars : vars.filter(v => (v.category || 'generic') === activeCategory);
+    // Search filter
     const search = document.getElementById('var-search')?.value?.toLowerCase() || '';
-    if (search) filtered = filtered.filter(v => v.name.toLowerCase().includes(search));
+    let bucket = superBuckets[activeCategory] || [];
+    if (search) bucket = bucket.filter(v => v.name.toLowerCase().includes(search));
 
-    // Filtrar ocultos
-    filtered = filtered.filter(v => !hiddenNames.has(v.name));
-
-    // Categoria Repositorios tem layout especial com cards por distro
-    if (activeCategory === 'repositorios') {
-        el.innerHTML = html + renderRepositoryCards(filtered);
+    if (!bucket.length) {
+        html += '<p class="text-slate-400 text-center py-8">Nenhuma variavel nesta categoria</p>';
+        el.innerHTML = html;
         return;
     }
 
-    // Na view "Todas", pular vars de repositorios (tem layout proprio acessivel via aba)
-    const nonRepo = activeCategory === 'Todas' ? filtered.filter(v => (v.category || 'generic') !== 'repositorios') : filtered;
+    // Get the section definitions for this super category
+    const sections = superCategorySections[activeCategory] || [];
+    const sectionCats = new Set();
+    sections.forEach(s => s.categories.forEach(c => sectionCats.add(c)));
+
+    // Variables that don't match any defined section in this super category
+    const leftover = bucket.filter(v => !sectionCats.has(v.category || 'generic'));
 
     html += '<div class="var-grid">';
-    if (activeCategory === 'Todas') {
-        cats.filter(c => c !== 'repositorios' && c !== 'oculto').forEach(c => {
-            const catVars = nonRepo.filter(v => (v.category || 'generic') === c);
-            if (!catVars.length) return;
-            html += `<h4 class="col-span-2 mt-4 first:mt-0 text-sm font-semibold text-slate-400 uppercase">${categoryLabels[c] || c}</h4>`;
-            html += renderVarsWithGroups(catVars);
-        });
-    } else {
-        html += renderVarsWithGroups(nonRepo);
+
+    sections.forEach(section => {
+        const sectionVars = bucket.filter(v => section.categories.includes(v.category || 'generic'));
+        if (!sectionVars.length) return;
+
+        html += `<h4 class="col-span-2 mt-4 first:mt-0 text-sm font-semibold text-slate-400 uppercase">${section.title}</h4>`;
+
+        if (section.categories.includes('repositorios')) {
+            html += renderRepositoryCards(sectionVars);
+        } else {
+            html += renderVarsWithGroups(sectionVars);
+        }
+    });
+
+    // Render leftover variables (not matching any defined section)
+    if (leftover.length) {
+        html += `<h4 class="col-span-2 mt-4 text-sm font-semibold text-slate-400 uppercase">Outras Variaveis</h4>`;
+        html += renderVarsWithGroups(leftover);
     }
+
     html += '</div>';
 
     el.innerHTML = html;
