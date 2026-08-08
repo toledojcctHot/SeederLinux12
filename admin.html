@@ -709,6 +709,26 @@
         </div>
     </div>
 
+    <!-- Modal: Galeria de Imagens -->
+    <div id="modal-image-gallery" class="modal hidden">
+        <div class="modal-backdrop" onclick="closeModal('modal-image-gallery')"></div>
+        <div class="modal-dialog modal-dialog-lg">
+            <div class="modal-header">
+                <h3 class="modal-title" id="gallery-modal-title">Selecionar imagem</h3>
+                <button class="modal-close" onclick="closeModal('modal-image-gallery')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="gallery-grid" class="gallery-grid"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="loadGalleryImages()">
+                    <i class="fas fa-sync-alt"></i> Atualizar
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-image-gallery')">Fechar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div id="toast-container"></div>
 

@@ -1364,14 +1364,7 @@ async function addVariable(e) {
 }
 window.addVariable = addVariable;
 
-function selectGalleryImage(url, varId, el) {
-    const input = document.querySelector(`input[data-var-id="${varId}"], textarea[data-var-id="${varId}"]`);
-    if (input) input.value = url;
-    const gallery = el.closest('.image-gallery');
-    gallery.querySelectorAll('.gallery-thumb').forEach(t => t.classList.remove('selected'));
-    el.classList.add('selected');
-}
-window.selectGalleryImage = selectGalleryImage;
+
 
 async function handleImageUpload(type, varId, inputEl) {
     const file = inputEl.files[0];
@@ -2022,31 +2015,25 @@ async function loadGalleryImages() {
 function selectGalleryImage(filename) {
     if (!galleryTargetVarName || !galleryTargetVarId) return;
 
-    const dominio = getVariableValue('DOMINIO') || '';
-    let baseUrl;
+    const relativeUrl = `/assets/wallpapers/${filename}`;
 
-    if (dominio) {
-        baseUrl = `http://seederlinux.${dominio}/assets/wallpapers/${filename}`;
-    } else {
-        const seederServer = getVariableValue('SEEDER_SERVER') || '';
-        const serverClean = seederServer.replace(/\/+$/, '');
-        baseUrl = `${serverClean}/assets/wallpapers/${filename}`;
-    }
-
-    const inputEl = document.querySelector(`input[data-var-id="${galleryTargetVarId}"]`);
+    const inputEl = document.querySelector(`input[data-var-id="${galleryTargetVarId}"].asset-card-url`);
     if (inputEl) {
-        inputEl.value = baseUrl;
+        inputEl.value = relativeUrl;
         inputEl.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
-    const previewEl = document.querySelector(`#preview-${galleryTargetVarId}`);
-    if (previewEl) {
-        previewEl.innerHTML = `<img src="${Utils.escapeHtml(baseUrl)}" alt="preview" style="max-width:100%;max-height:120px;border-radius:8px;">`;
-    }
+    updateAssetCardPreview(galleryTargetVarId, relativeUrl);
+
+    const v = allVariables.find(x => String(x.id) === String(galleryTargetVarId));
+    if (v) v.current_value = relativeUrl;
 
     closeModal('modal-image-gallery');
     Toast.success('Imagem selecionada: ' + filename);
 }
+window.openImageGallery = openImageGallery;
+window.loadGalleryImages = loadGalleryImages;
+window.selectGalleryImage = selectGalleryImage;
 
 function getVariableValue(name) {
     if (!allVariables) return '';
