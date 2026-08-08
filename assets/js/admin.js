@@ -987,6 +987,10 @@ function renderAssetCard(v) {
                     <input type="file" class="hidden" accept="${acceptTypes}" onchange="uploadAsset('${Utils.escapeHtml(v.name)}', ${v.id}, this)">
                     <i class="fas fa-upload"></i> Selecionar arquivo
                 </label>
+                ${v.name !== 'LOGO_URL' ? `
+                <button type="button" class="asset-btn asset-btn-secondary" onclick="openImageGallery('${Utils.escapeHtml(v.name)}', ${v.id})">
+                    <i class="fas fa-search"></i> Buscar no Servidor
+                </button>` : ''}
                 <button type="button" class="asset-btn asset-btn-secondary" onclick="clearAsset(${v.id})" ${val ? '' : 'disabled'}>
                     <i class="fas fa-trash"></i> Remover
                 </button>
@@ -1959,6 +1963,95 @@ function setupEventListeners() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') document.querySelectorAll('.modal:not(.hidden)').forEach(m => m.classList.add('hidden'));
     });
+}
+
+// ============================================================
+// GALERIA DE IMAGENS - Buscar no Servidor
+// ============================================================
+
+let galleryTargetVarName = null;
+let galleryTargetVarId = null;
+
+async function openImageGallery(varName, varId) {
+    galleryTargetVarName = varName;
+    galleryTargetVarId = varId;
+
+    const fieldLabels = {
+        'WALLPAPER_URL': 'Wallpaper Desktop',
+        'WALLPAPER_LOGIN_URL': 'Wallpaper Login',
+        'GREETER_URL': 'Greeter (Boas-vindas)'
+    };
+
+    const titleEl = document.getElementById('gallery-modal-title');
+    if (titleEl) titleEl.textContent = 'Selecionar imagem - ' + (fieldLabels[varName] || varName);
+
+    const gridEl = document.getElementById('gallery-grid');
+    if (gridEl) gridEl.innerHTML = '<p class="text-slate-400 text-center py-8">Carregando imagens...</p>';
+
+    openModal('modal-image-gallery');
+
+    await loadGalleryImages();
+}
+
+async function loadGalleryImages() {
+    const gridEl = document.getElementById('gallery-grid');
+    if (!gridEl) return;
+
+    gridEl.innerHTML = '<p class="text-slate-400 text-center py-8">Carregando imagens...</p>';
+
+    try {
+        const res = await API.get('gallery-images');
+        if (!res.success || !res.data.images || !res.data.images.length) {
+            gridEl.innerHTML = '<p class="text-slate-400 text-center py-8">Nenhuma imagem encontrada em assets/wallpapers/</p>';
+            return;
+        }
+
+        gridEl.innerHTML = res.data.images.map(img => `
+            <div class="gallery-item" onclick="selectGalleryImage('${Utils.escapeHtml(img.filename)}')">
+                <div class="gallery-item-img">
+                    <img src="${Utils.escapeHtml(img.thumbnail || img.url)}" alt="${Utils.escapeHtml(img.filename)}" loading="lazy">
+                </div>
+                <span class="gallery-item-name">${Utils.escapeHtml(img.filename)}</span>
+            </div>
+        `).join('');
+    } catch (err) {
+        gridEl.innerHTML = '<p class="text-red-400 text-center py-8">Erro ao carregar imagens: ' + Utils.escapeHtml(err.message || 'erro') + '</p>';
+    }
+}
+
+function selectGalleryImage(filename) {
+    if (!galleryTargetVarName || !galleryTargetVarId) return;
+
+    const dominio = getVariableValue('DOMINIO') || '';
+    let baseUrl;
+
+    if (dominio) {
+        baseUrl = `http://seederlinux.${dominio}/assets/wallpapers/${filename}`;
+    } else {
+        const seederServer = getVariableValue('SEEDER_SERVER') || '';
+        const serverClean = seederServer.replace(/\/+$/, '');
+        baseUrl = `${serverClean}/assets/wallpapers/${filename}`;
+    }
+
+    const inputEl = document.querySelector(`input[data-var-id="${galleryTargetVarId}"]`);
+    if (inputEl) {
+        inputEl.value = baseUrl;
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    const previewEl = document.querySelector(`#preview-${galleryTargetVarId}`);
+    if (previewEl) {
+        previewEl.innerHTML = `<img src="${Utils.escapeHtml(baseUrl)}" alt="preview" style="max-width:100%;max-height:120px;border-radius:8px;">`;
+    }
+
+    closeModal('modal-image-gallery');
+    Toast.success('Imagem selecionada: ' + filename);
+}
+
+function getVariableValue(name) {
+    if (!allVariables) return '';
+    const v = allVariables.find(x => x.name === name);
+    return v ? (v.current_value || v.default_value || '') : '';
 }
 
 setupEventListeners();

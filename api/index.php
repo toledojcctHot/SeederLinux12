@@ -189,6 +189,10 @@ try {
             if ($method !== 'POST') jsonError('Method not allowed', 405);
             handleUploadAsset();
             break;
+        case 'gallery-images':
+            requireAuth();
+            handleGetGalleryImages();
+            break;
 
         // Script ordering
         case 'update-script-order':
@@ -1326,6 +1330,36 @@ function handleGetWallpapers($orgId) {
                     'timestamp' => filemtime($uploadDir . $file)
                 ];
             }
+        }
+    }
+
+    usort($images, fn($a, $b) => $b['timestamp'] - $a['timestamp']);
+    jsonSuccess(['images' => $images]);
+}
+
+/**
+ * Lista TODAS as imagens da pasta assets/wallpapers/ para a galeria.
+ * Nao filtra por OM - mostra todas as imagens disponiveis.
+ */
+function handleGetGalleryImages() {
+    $uploadDir = __DIR__ . '/../assets/wallpapers/';
+    $thumbDir = $uploadDir . 'thumbs/';
+    $images = [];
+    $allowedExt = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+    if (is_dir($uploadDir)) {
+        foreach (scandir($uploadDir) as $file) {
+            if ($file === '.' || $file === '..') continue;
+            if (is_dir($uploadDir . $file)) continue;
+            $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+            if (!in_array($ext, $allowedExt)) continue;
+
+            $images[] = [
+                'filename' => $file,
+                'url' => '/assets/wallpapers/' . $file,
+                'thumbnail' => file_exists($thumbDir . $file) ? '/assets/wallpapers/thumbs/' . $file : '/assets/wallpapers/' . $file,
+                'timestamp' => filemtime($uploadDir . $file)
+            ];
         }
     }
 
