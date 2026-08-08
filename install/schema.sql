@@ -249,6 +249,7 @@ CREATE TABLE IF NOT EXISTS scripts (
     execution_order INTEGER DEFAULT 0,
     version INTEGER DEFAULT 1,
     organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+    current_version_id INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -264,6 +265,52 @@ BEGIN
         ALTER TABLE scripts ADD CONSTRAINT scripts_filename_key UNIQUE (filename);
     END IF;
 END $;
+
+-- ============================================================================
+-- Table 6b: script_versions (script versioning infrastructure)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS script_versions (
+    id SERIAL PRIMARY KEY,
+    script_id INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    version_name VARCHAR(200) NOT NULL,
+    version_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    changelog TEXT DEFAULT '',
+    version_type VARCHAR(20) NOT NULL DEFAULT 'factory' CHECK (version_type IN ('factory', 'gap_default', 'om_specific')),
+    organization_id INTEGER REFERENCES organizations(id),
+    is_active BOOLEAN DEFAULT true,
+    created_by INTEGER REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(script_id, version_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_script_versions_script ON script_versions(script_id);
+CREATE INDEX IF NOT EXISTS idx_script_versions_type ON script_versions(version_type);
+CREATE INDEX IF NOT EXISTS idx_script_versions_org ON script_versions(organization_id);
+
+-- FK: scripts.current_version_id -> script_versions.id (deferred; script_versions is created after scripts)
+DO $
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'scripts_current_version_id_fkey' AND table_name = 'scripts') THEN
+        ALTER TABLE scripts ADD CONSTRAINT scripts_current_version_id_fkey
+            FOREIGN KEY (current_version_id) REFERENCES script_versions(id);
+    END IF;
+END $;
+
+-- ============================================================================
+-- Table 6c: om_script_versions (organization-specific script version overrides)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS om_script_versions (
+    id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    script_id INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    version_id INTEGER NOT NULL REFERENCES script_versions(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(organization_id, script_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_om_script_versions_org ON om_script_versions(organization_id);
+CREATE INDEX IF NOT EXISTS idx_om_script_versions_script ON om_script_versions(script_id);
 
 -- ============================================================================
 -- Table 7: deploy_bundles
