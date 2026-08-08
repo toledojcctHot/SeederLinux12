@@ -1,22 +1,23 @@
 #!/bin/bash
 # ============================================================================
-# Core Script: core_domain.sh
-# SeederLinux Lite - Ingresso no AD (SSSD/Winbind)
+# Core Script: core_domain.sh (v2 - State Machine)
+# SeederLinux Lite - Gerenciador de Estado do Active Directory
 # ============================================================================
-# Configura Kerberos, Samba, SSSD, PAM, NSS, sudo e mkhomedir para
-# ingressar a estacao no dominio Active Directory.
-# Os placeholders VARIAVEL são substituídos automaticamente
+# Implementa uma máquina de estados para diagnosticar, classificar e
+# corrigir o ingresso no AD, suportando SSSD (realm join) e Winbind
+# (net ads join) como fallback.
+# Os placeholders {{VARIAVEL}} são substituídos automaticamente
 # pelo sistema na geração do bundle.
 # ============================================================================
 
 set -e
 
 echo "============================================================"
-echo "04 - Ingresso no Active Directory"
+echo "04 - Gerenciador de Estado do Active Directory"
 echo "============================================================"
 
 # ============================================================
-# Variáveis
+# Variáveis (substituídas no bundle)
 # ============================================================
 DOMINIO="{{DOMINIO}}"
 DOMINIO_NETBIOS="{{DOMINIO_NETBIOS}}"
@@ -31,28 +32,233 @@ OFFLINE_AUTH_ENABLED="{{OFFLINE_AUTH_ENABLED}}"
 OFFLINE_AUTH_DAYS="{{OFFLINE_AUTH_DAYS}}"
 ADMIN_USERNAME="{{ADMIN_USERNAME}}"
 AUTH_METHOD="{{AUTH_METHOD}}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 
 echo ">>> Dominio: $DOMINIO"
 echo ">>> NetBIOS: $DOMINIO_NETBIOS"
 echo ">>> DC principal: $DC_IP"
 
 # ============================================================
-# Definir modo winbind offline logon conforme AUTH_METHOD e OFFLINE_AUTH_ENABLED
+# ESTÁGIO 1: DIAGNÓSTICO
 # ============================================================
-if [ "$AUTH_METHOD" = "winbind" ] && [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
-    WINBIND_OFFLINE="yes"
+echo "============================================================"
+echo ">>> ESTÁGIO 1: Diagnóstico do ambiente AD"
+echo "============================================================"
+
+# Funções de diagnóstico
+check_dns() {
+    if host "$DOMINIO" > /dev/null 2>&1; then
+        echo "DNS............. OK ($DOMINIO resolve)"
+        return 0
+    else
+        echo "DNS............. FALHA ($DOMINIO não resolve)"
+        return 1
+    fi
+}
+
+check_kerberos_config() {
+    if [ -f /etc/krb5.conf ]; then
+        echo "Kerberos........ OK (configurado)"
+        return 0
+    else
+        echo "Kerberos........ FALHA (não configurado)"
+        return 1
+    fi
+}
+
+check_ticket() {
+    if klist -s 2>/dev/null; then
+        echo "Ticket.......... OK ($(klist | grep 'Default principal' | awk '{print $3}'))"
+        return 0
+    else
+        echo "Ticket.......... NÃO (sem ticket ativo)"
+        return 1
+    fi
+}
+
+check_realm() {
+    if realm list 2>/dev/null | grep -q "$DOMINIO"; then
+        echo "Realm........... OK (associado)"
+        return 0
+    else
+        echo "Realm........... NÃO (não associado)"
+        return 1
+    fi
+}
+
+check_sssd() {
+    if systemctl is-active --quiet sssd 2>/dev/null; then
+        echo "SSSD............ OK (ativo)"
+        return 0
+    else
+        echo "SSSD............ NÃO (parado)"
+        return 1
+    fi
+}
+
+check_winbind() {
+    if systemctl is-active --quiet winbind 2>/dev/null; then
+        echo "Winbind......... OK (ativo)"
+        return 0
+    else
+        echo "Winbind......... NÃO (parado)"
+        return 1
+    fi
+}
+
+check_keytab() {
+    if [ -f /etc/krb5.keytab ] && [ -s /etc/krb5.keytab ]; then
+        echo "Keytab.......... OK (presente)"
+        return 0
+    else
+        echo "Keytab.......... NÃO (ausente ou vazio)"
+        return 1
+    fi
+}
+
+check_machine_account() {
+    if net ads testjoin > /dev/null 2>&1 2>/dev/null; then
+        echo "Conta AD........ OK (verificada)"
+        return 0
+    else
+        if adcli testjoin --domain="$DOMINIO" > /dev/null 2>&1 2>/dev/null; then
+            echo "Conta AD........ OK (adcli)"
+            return 0
+        else
+            echo "Conta AD........ NÃO (não verificada)"
+            return 1
+        fi
+    fi
+}
+
+check_time_sync() {
+    if timedatectl status 2>/dev/null | grep -q "synchronized: yes"; then
+        echo "Sinc. Tempo..... OK"
+        return 0
+    else
+        echo "Sinc. Tempo..... NÃO (pode afetar Kerberos)"
+        return 1
+    fi
+}
+
+# Executar diagnóstico
+echo ""
+echo "--- Coletando informações ---"
+DNS_OK=true && check_dns || DNS_OK=false
+KRB5_OK=true && check_kerberos_config || KRB5_OK=false
+TICKET_OK=true && check_ticket || TICKET_OK=false
+REALM_OK=true && check_realm || REALM_OK=false
+SSSD_OK=true && check_sssd || SSSD_OK=false
+WINBIND_OK=true && check_winbind || WINBIND_OK=false
+KEYTAB_OK=true && check_keytab || KEYTAB_OK=false
+MACHINE_OK=true && check_machine_account || MACHINE_OK=false
+TIME_OK=true && check_time_sync || TIME_OK=false
+echo "================================"
+
+# ============================================================
+# ESTÁGIO 2: CLASSIFICAR ESTADO
+# ============================================================
+echo ""
+echo ">>> ESTÁGIO 2: Classificando estado atual"
+
+if [ "$REALM_OK" = "true" ] && [ "$SSSD_OK" = "true" ] && [ "$KEYTAB_OK" = "true" ]; then
+    if [ "$WINBIND_OK" = "true" ]; then
+        ESTADO="INGRESSADO_HIBRIDO"
+    else
+        ESTADO="INGRESSADO_SSSD"
+    fi
+elif [ "$WINBIND_OK" = "true" ] && [ "$MACHINE_OK" = "true" ]; then
+    ESTADO="INGRESSADO_WINBIND"
+elif [ "$REALM_OK" = "false" ] && [ "$WINBIND_OK" = "false" ] && [ "$MACHINE_OK" = "false" ]; then
+    ESTADO="NAO_INGRESSADO"
+elif [ "$REALM_OK" = "true" ] && [ "$KEYTAB_OK" = "false" ]; then
+    ESTADO="CORROMPIDO"
+elif [ "$REALM_OK" = "true" ] && [ "$SSSD_OK" = "false" ]; then
+    ESTADO="PARCIAL"
 else
-    WINBIND_OFFLINE="false"
+    ESTADO="INDETERMINADO"
 fi
 
-# ============================================================
-# Configurar Kerberos
-# ============================================================
-echo ">>> Configurando Kerberos..."
-REALM="${DOMINIO^^}"
+echo ">>> Estado detectado: $ESTADO"
 
-cat > /etc/krb5.conf <<EOF
+# ============================================================
+# ESTÁGIO 3: DECISÃO
+# ============================================================
+echo ""
+echo ">>> ESTÁGIO 3: Decisão sobre ação necessária"
+
+case "$ESTADO" in
+    INGRESSADO_SSSD|INGRESSADO_HIBRIDO)
+        echo ">>> A máquina já está ingressada via SSSD."
+        read -p ">>> Deseja reingressar (remover e ingressar novamente)? (s/N): " REINGRESSAR
+        if [[ "$REINGRESSAR" =~ ^[Ss]$ ]]; then
+            echo ">>> Removendo ingresso existente..."
+            realm leave "$DOMINIO" -U "$ADMIN_USERNAME" 2>/dev/null || true
+            net ads leave -U "$ADMIN_USERNAME" 2>/dev/null || true
+            ESTADO="NAO_INGRESSADO"
+        else
+            echo ">>> Mantendo ingresso existente. Pulando ingresso."
+        fi
+        ;;
+    
+    INGRESSADO_WINBIND)
+        echo ">>> A máquina está ingressada via Winbind (método legado)."
+        echo ">>> Recomenda-se migrar para SSSD."
+        read -p ">>> Deseja migrar para SSSD (remover Winbind e ingressar via realm)? (S/n): " MIGRAR
+        if [[ ! "$MIGRAR" =~ ^[Nn]$ ]]; then
+            echo ">>> Removendo ingresso Winbind..."
+            net ads leave -U "$ADMIN_USERNAME" 2>/dev/null || true
+            systemctl stop winbind 2>/dev/null || true
+            ESTADO="NAO_INGRESSADO"
+        else
+            echo ">>> Mantendo Winbind. Pulando ingresso."
+        fi
+        ;;
+    
+    CORROMPIDO|PARCIAL)
+        echo ">>> AVISO: Estado inconsistente detectado ($ESTADO)."
+        echo ">>> Possíveis causas: keytab ausente, SSSD parado, ou ingresso parcial."
+        read -p ">>> Deseja reparar automaticamente? (S/n): " REPARAR
+        if [[ ! "$REPARAR" =~ ^[Nn]$ ]]; then
+            echo ">>> Executando limpeza completa..."
+            realm leave "$DOMINIO" 2>/dev/null || true
+            net ads leave -U "$ADMIN_USERNAME" 2>/dev/null || true
+            rm -f /etc/krb5.keytab
+            systemctl stop sssd 2>/dev/null || true
+            systemctl stop winbind 2>/dev/null || true
+            # Limpar caches
+            rm -rf /var/lib/sss/db/* 2>/dev/null || true
+            rm -rf /var/lib/sss/mc/* 2>/dev/null || true
+            ESTADO="NAO_INGRESSADO"
+            echo ">>> Limpeza concluída."
+        else
+            echo ">>> Prosseguindo sem reparar (pode falhar)."
+        fi
+        ;;
+    
+    INDETERMINADO)
+        echo ">>> Estado indeterminado. Tentando ingresso como máquina nova."
+        ESTADO="NAO_INGRESSADO"
+        ;;
+esac
+
+# ============================================================
+# ESTÁGIO 4: EXECUÇÃO (apenas se necessário)
+# ============================================================
+if [ "$ESTADO" = "NAO_INGRESSADO" ]; then
+    echo ""
+    echo ">>> ESTÁGIO 4: Executando ingresso no domínio"
+
+    # Garantir DNS para o DC
+    echo ">>> Ajustando DNS para ingresso no dominio..."
+    cat > /etc/resolv.conf <<EOF
+nameserver $DC_IP
+search $DOMINIO
+EOF
+
+    # Configurar Kerberos
+    echo ">>> Configurando Kerberos..."
+    REALM="${DOMINIO^^}"
+    cat > /etc/krb5.conf <<EOF
 [libdefaults]
     default_realm = ${REALM}
     dns_lookup_realm = false
@@ -73,18 +279,15 @@ cat > /etc/krb5.conf <<EOF
     ${DOMINIO} = ${REALM}
 EOF
 
-echo ">>> Kerberos configurado"
-
-# ============================================================
-# Configurar Samba
-# ============================================================
-echo ">>> Configurando Samba..."
-cat > /etc/samba/smb.conf <<EOF
+    # Configurar Samba
+    echo ">>> Configurando Samba..."
+    cat > /etc/samba/smb.conf <<EOF
 [global]
     workgroup = ${DOMINIO_NETBIOS}
     realm = ${DOMINIO}
     security = ads
     dns forwarder = ${DC_IP}
+    kerberos method = secrets and keytab
     idmap config * : backend = tdb
     idmap config * : range = 3000-7999
     idmap config ${DOMINIO_NETBIOS} : backend = rid
@@ -92,7 +295,7 @@ cat > /etc/samba/smb.conf <<EOF
     template shell = /bin/bash
     template homedir = /home/%D/%U
     winbind use default domain = true
-    winbind offline logon = ${WINBIND_OFFLINE}
+    winbind offline logon = false
     winbind nss info = rfc2307
     winbind enum users = no
     winbind enum groups = no
@@ -102,103 +305,55 @@ cat > /etc/samba/smb.conf <<EOF
     disable spoolss = yes
 EOF
 
-echo ">>> Samba configurado"
+    # Obter ticket Kerberos
+    echo ">>> Obtendo ticket Kerberos..."
+    KINIT_OK=false
 
-# ============================================================
-# Ajustar DNS para o DC (IMPRESCINDÍVEL para ingresso)
-# ============================================================
-echo ">>> Ajustando DNS para ingresso no dominio..."
-cat > /etc/resolv.conf <<EOF
-nameserver $DC_IP
-search $DOMINIO
-EOF
-echo ">>> DNS ajustado para: $DC_IP"
-
-# ============================================================
-# Obter ticket Kerberos
-# Estrategia:
-# 1. Se ADMIN_PASSWORD estiver definida, tenta pipe com 4 combinacoes
-# 2. Se pipe falhou ou nao havia senha, entra em modo interativo:
-#    - Se ADMIN_USERNAME ja estiver definido, pede apenas a senha
-#    - Se ADMIN_USERNAME estiver vazio, pede usuario e senha
-# 3. Loop ate obter o ticket ou o operador desistir
-# ============================================================
-echo ">>> Obtendo ticket Kerberos..."
-KINIT_OK=false
-
-# --- Tentativa via pipe (se senha disponivel) ---
-if [ -n "$ADMIN_PASSWORD" ]; then
-    echo ">>> Tentando obter ticket com senha pre-definida..."
-    echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${DOMINIO^^}" 2>/dev/null && KINIT_OK=true
-    [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${DOMINIO_NETBIOS}" 2>/dev/null && KINIT_OK=true
-    [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${DOMINIO^^}" 2>/dev/null && KINIT_OK=true
-    [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${DOMINIO,,}" 2>/dev/null && KINIT_OK=true
-fi
-
-# --- Tentativa interativa (se pipe falhou ou nao havia senha) ---
-if [ "$KINIT_OK" != "true" ]; then
-    echo ">>> Nao foi possivel obter ticket automaticamente."
-    echo ">>> Solicitando credenciais interativamente..."
-
-    while [ "$KINIT_OK" != "true" ]; do
-        # Se usuario nao estiver definido, pede o usuario
-        if [ -z "$ADMIN_USERNAME" ] || [ "$ADMIN_USERNAME" = "{{ADMIN_USERNAME}}" ]; then
-            read -p ">>> Usuario do dominio: " input_user
-            [ -n "$input_user" ] && ADMIN_USERNAME="$input_user"
-        else
-            echo ">>> Usuario: ${ADMIN_USERNAME}"
-        fi
-
-        # kinit interativo pede a senha no terminal
-        echo ">>> Tentando kinit para ${ADMIN_USERNAME}@${DOMINIO^^} ..."
-        if kinit "${ADMIN_USERNAME}@${DOMINIO^^}"; then
-            KINIT_OK=true
-        else
-            echo ">>> Falhou. Verifique a senha e conectividade com o DC."
-            read -p ">>> Tentar novamente? (S/n): " try_again
-            if [[ "$try_again" =~ ^[Nn]$ ]]; then
-                break
-            fi
-            # Na proxima tentativa, permite trocar o usuario
-            ADMIN_USERNAME=""
-        fi
-    done
-fi
-
-if [ "$KINIT_OK" != "true" ]; then
-    echo ">>> ERRO: Falha ao obter ticket Kerberos."
-    echo ">>> Verifique as credenciais e conectividade com o DC."
-    exit 1
-fi
-echo ">>> Ticket Kerberos obtido com sucesso!"
-
-# ============================================================
-# Ingressar no dominio
-# Metodo 1 (PRINCIPAL): realm join (SSSD)
-# Metodo 2 (FALLBACK): net ads join (Winbind)
-# ============================================================
-JOIN_OK=false
-JOIN_METHOD=""
-
-# Verificar se já está no domínio
-REALM_LIST=$(realm list 2>/dev/null | grep -c "$DOMINIO" || true)
-if [ "$REALM_LIST" -gt 0 ]; then
-    echo ">>> Maquina ja esta associada ao dominio $DOMINIO."
-    read -p ">>> Deseja remover e reingressar? (S/n): " REJOIN
-    if [[ "$REJOIN" =~ ^[Nn]$ ]]; then
-        echo ">>> Mantendo associacao existente. Prosseguindo..."
-        JOIN_OK=true
-        JOIN_METHOD="sssd"
-    else
-        echo ">>> Removendo associacao anterior..."
-        realm leave "$DOMINIO" -U "$ADMIN_USERNAME" 2>/dev/null || true
-        net ads leave -U "$ADMIN_USERNAME" 2>/dev/null || true
+    # Tentar com pipe se ADMIN_PASSWORD estiver disponível
+    if [ -n "$ADMIN_PASSWORD" ]; then
+        echo ">>> Tentando obter ticket com senha pre-definida..."
+        echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${REALM}" 2>/dev/null && KINIT_OK=true
+        [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME}@${DOMINIO_NETBIOS}" 2>/dev/null && KINIT_OK=true
+        [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${REALM}" 2>/dev/null && KINIT_OK=true
+        [ "$KINIT_OK" != "true" ] && echo "$ADMIN_PASSWORD" | kinit "${ADMIN_USERNAME,,}@${DOMINIO,,}" 2>/dev/null && KINIT_OK=true
     fi
-fi
 
-# --- Metodo 1: realm join (SSSD) ---
-if [ "$JOIN_OK" != "true" ]; then
-    echo ">>> Ingressando no dominio via realm join (SSSD)..."
+    # Modo interativo se pipe falhou
+    if [ "$KINIT_OK" != "true" ]; then
+        echo ">>> Não foi possível obter ticket automaticamente."
+        echo ">>> Solicitando credenciais interativamente..."
+        while [ "$KINIT_OK" != "true" ]; do
+            if [ -z "$ADMIN_USERNAME" ] || [ "$ADMIN_USERNAME" = "Administrator" ]; then
+                read -p ">>> Usuário do domínio: " input_user
+                [ -n "$input_user" ] && ADMIN_USERNAME="$input_user"
+            else
+                echo ">>> Usuário: ${ADMIN_USERNAME}"
+            fi
+
+            echo ">>> Tentando kinit para ${ADMIN_USERNAME}@${REALM} ..."
+            if kinit "${ADMIN_USERNAME}@${REALM}"; then
+                KINIT_OK=true
+            else
+                echo ">>> Falhou. Verifique a senha e conectividade com o DC."
+                read -p ">>> Tentar novamente? (S/n): " try_again
+                [[ "$try_again" =~ ^[Nn]$ ]] && break
+                ADMIN_USERNAME=""
+            fi
+        done
+    fi
+
+    if [ "$KINIT_OK" != "true" ]; then
+        echo ">>> ERRO: Falha ao obter ticket Kerberos."
+        echo ">>> Verifique as credenciais e conectividade com o DC."
+        exit 1
+    fi
+    echo ">>> Ticket Kerberos obtido com sucesso!"
+
+    # Tentar ingresso via realm join (SSSD)
+    JOIN_OK=false
+    JOIN_METHOD=""
+
+    echo ">>> Ingressando no domínio via realm join (SSSD)..."
     if echo "$ADMIN_PASSWORD" | realm join "$DOMINIO" \
         --user="$ADMIN_USERNAME" \
         --computer-ou="$OU_PADRAO" \
@@ -209,51 +364,55 @@ if [ "$JOIN_OK" != "true" ]; then
     else
         echo ">>> realm join falhou."
     fi
-fi
 
-# --- Metodo 2: net ads join (Winbind) ---
-if [ "$JOIN_OK" != "true" ]; then
-    echo ">>> Tentando fallback com net ads join (Winbind)..."
+    # Fallback: net ads join (Winbind)
+    if [ "$JOIN_OK" != "true" ]; then
+        echo ">>> Tentando fallback com net ads join (Winbind)..."
 
-    if ! grep -q "kerberos method" /etc/samba/smb.conf; then
-        sed -i '/\[global\]/a\    kerberos method = secrets and keytab' /etc/samba/smb.conf
+        if ! grep -q "kerberos method" /etc/samba/smb.conf; then
+            sed -i '/\[global\]/a\    kerberos method = secrets and keytab' /etc/samba/smb.conf
+        fi
+
+        DC_FQDN="dc-${OM_ACRONYM,,}.${DOMINIO}"
+        if echo "$ADMIN_PASSWORD" | net ads join "$DOMINIO" \
+            -U "$ADMIN_USERNAME" \
+            -S "$DC_FQDN" \
+            createcomputer="$OU_PADRAO" 2>&1; then
+            JOIN_OK=true
+            JOIN_METHOD="winbind"
+            echo ">>> Ingresso via Winbind (net ads join) bem-sucedido!"
+
+            # Gerar keytab
+            net ads keytab create -U "$ADMIN_USERNAME" -P "$ADMIN_PASSWORD" 2>/dev/null || {
+                echo "$ADMIN_PASSWORD" | adcli join "$DOMINIO" \
+                    --login-user="$ADMIN_USERNAME" \
+                    --domain-ou="$OU_PADRAO" \
+                    --stdin-password 2>&1 || true
+            }
+        else
+            echo ">>> net ads join falhou."
+        fi
     fi
 
-    DC_FQDN="dc-${OM_ACRONYM,,}.${DOMINIO}"
-    if echo "$ADMIN_PASSWORD" | net ads join "$DOMINIO" \
-        -U "$ADMIN_USERNAME" \
-        -S "$DC_FQDN" \
-        createcomputer="$OU_PADRAO" 2>&1; then
-        JOIN_OK=true
-        JOIN_METHOD="winbind"
-        echo ">>> Ingresso via Winbind (net ads join) bem-sucedido!"
-
-        net ads keytab create -U "$ADMIN_USERNAME" -P "$ADMIN_PASSWORD" 2>/dev/null || {
-            echo "$ADMIN_PASSWORD" | adcli join "$DOMINIO" \
-                --login-user="$ADMIN_USERNAME" \
-                --domain-ou="$OU_PADRAO" \
-                --stdin-password 2>&1 || true
-        }
-    else
-        echo ">>> net ads join falhou."
+    if [ "$JOIN_OK" != "true" ]; then
+        echo ">>> ERRO: Falha ao ingressar no domínio com todos os métodos."
+        read -p ">>> Deseja continuar mesmo assim? (S/n): " CONTINUE
+        if [[ "$CONTINUE" =~ ^[Nn]$ ]]; then
+            echo ">>> Instalação abortada pelo usuário."
+            exit 1
+        fi
+        JOIN_METHOD="nenhum"
     fi
-fi
-
-# --- Se ambos falharem ---
-if [ "$JOIN_OK" != "true" ]; then
-    echo ">>> ERRO: Falha ao ingressar no dominio com todos os metodos."
-    read -p ">>> Deseja continuar mesmo assim? (S/n): " CONTINUE
-    if [[ "$CONTINUE" =~ ^[Nn]$ ]]; then
-        echo ">>> Instalacao abortada pelo usuario."
-        exit 1
-    fi
-    JOIN_METHOD="nenhum"
-fi
+fi  # Fim do bloco de ingresso
 
 # ============================================================
-# Configurar SSSD (apenas se metodo for sssd)
+# ESTÁGIO 5: CONFIGURAÇÃO PÓS-INGRESSO E VALIDAÇÃO
 # ============================================================
-if [ "$JOIN_METHOD" = "sssd" ]; then
+echo ""
+echo ">>> ESTÁGIO 5: Configuração e validação"
+
+# Configurar SSSD (se método for sssd)
+if [ "$JOIN_METHOD" = "sssd" ] || [ "$ESTADO" = "INGRESSADO_SSSD" ] || [ "$ESTADO" = "INGRESSADO_HIBRIDO" ]; then
     echo ">>> Configurando SSSD..."
     OFFLINE_CACHE=""
     if [ "$OFFLINE_AUTH_ENABLED" = "true" ]; then
@@ -290,9 +449,7 @@ EOF
     echo ">>> SSSD configurado"
 fi
 
-# ============================================================
 # Configurar NSS
-# ============================================================
 echo ">>> Configurando NSS..."
 if [ "$JOIN_METHOD" = "winbind" ]; then
     cat > /etc/nsswitch.conf <<EOF
@@ -328,13 +485,10 @@ fi
 
 echo ">>> NSS configurado"
 
-# ============================================================
 # Configurar PAM (mkhomedir)
-# ============================================================
 echo ">>> Configurando PAM e mkhomedir..."
 pam-auth-update --enable mkhomedir --force 2>/dev/null || true
 
-# Garantir criacao automatica do home
 if [ -f /etc/pam.d/common-session ]; then
     grep -q "pam_mkhomedir" /etc/pam.d/common-session || \
         echo "session required pam_mkhomedir.so skel=/etc/skel umask=0022" >> /etc/pam.d/common-session
@@ -342,13 +496,11 @@ fi
 
 echo ">>> PAM configurado"
 
-# ============================================================
-# Configurar sudo para grupos do dominio
-# ============================================================
+# Configurar sudo para grupos do domínio
 echo ">>> Configurando sudo..."
 SUDO_FILE="/etc/sudoers.d/seederlinux-domain"
 cat > "$SUDO_FILE" <<EOF
-# SeederLinux - Acesso sudo para grupos do dominio
+# SeederLinux - Acesso sudo para grupos do domínio
 %${GRUPO_ADMIN_AD}    ALL=(ALL:ALL) ALL
 %${GRUPO_ADMIN_LINUX}  ALL=(ALL:ALL) ALL
 EOF
@@ -359,24 +511,86 @@ fi
 
 chmod 440 "$SUDO_FILE"
 visudo -cf "$SUDO_FILE" || {
-    echo ">>> ERRO: sintaxe do sudoers invalida"
+    echo ">>> ERRO: sintaxe do sudoers inválida"
     exit 1
 }
 
 echo ">>> Sudo configurado"
 
-# ============================================================
-# Reiniciar servicos
-# ============================================================
-echo ">>> Reiniciando servicos..."
-if [ "$JOIN_METHOD" = "sssd" ]; then
+# Reiniciar serviços
+echo ">>> Reiniciando serviços..."
+if [ "$JOIN_METHOD" = "sssd" ] || [ "$ESTADO" = "INGRESSADO_SSSD" ] || [ "$ESTADO" = "INGRESSADO_HIBRIDO" ]; then
     systemctl restart sssd 2>/dev/null || true
     systemctl enable sssd
-elif [ "$JOIN_METHOD" = "winbind" ]; then
+fi
+
+if [ "$JOIN_METHOD" = "winbind" ] || [ "$ESTADO" = "INGRESSADO_WINBIND" ]; then
     systemctl restart winbind 2>/dev/null || true
     systemctl enable winbind
 fi
+
 systemctl restart samba 2>/dev/null || true
 
-echo ">>> [04] Ingresso no AD concluido! Metodo: ${JOIN_METHOD:-manual}"
+# ============================================================
+# VALIDAÇÃO FINAL
+# ============================================================
+echo ""
+echo ">>> Validação final..."
+
+VALIDATION_OK=true
+
+if [ "$JOIN_METHOD" = "sssd" ] || [ "$ESTADO" = "INGRESSADO_SSSD" ] || [ "$ESTADO" = "INGRESSADO_HIBRIDO" ]; then
+    echo "--- Testes SSSD ---"
+    if systemctl is-active --quiet sssd; then
+        echo "✔ SSSD ativo"
+    else
+        echo "✘ SSSD NÃO está ativo"
+        VALIDATION_OK=false
+    fi
+    
+    if [ -f /etc/krb5.keytab ] && [ -s /etc/krb5.keytab ]; then
+        echo "✔ Keytab presente"
+    else
+        echo "✘ Keytab ausente ou vazio"
+        VALIDATION_OK=false
+    fi
+    
+    if realm list 2>/dev/null | grep -q "$DOMINIO"; then
+        echo "✔ Realm associado"
+    else
+        echo "✘ Realm NÃO associado"
+        VALIDATION_OK=false
+    fi
+fi
+
+if [ "$JOIN_METHOD" = "winbind" ] || [ "$ESTADO" = "INGRESSADO_WINBIND" ]; then
+    echo "--- Testes Winbind ---"
+    if systemctl is-active --quiet winbind; then
+        echo "✔ Winbind ativo"
+    else
+        echo "✘ Winbind NÃO está ativo"
+        VALIDATION_OK=false
+    fi
+    
+    if net ads testjoin > /dev/null 2>&1; then
+        echo "✔ Testjoin OK"
+    else
+        echo "✘ Testjoin FALHOU"
+        VALIDATION_OK=false
+    fi
+fi
+
+if [ "$VALIDATION_OK" = "false" ]; then
+    echo ""
+    echo ">>> AVISO: Alguns testes de validação falharam."
+    echo ">>> O ingresso pode não estar completamente funcional."
+    read -p ">>> Deseja continuar mesmo assim? (S/n): " CONTINUE
+    if [[ "$CONTINUE" =~ ^[Nn]$ ]]; then
+        echo ">>> Instalação abortada pelo usuário."
+        exit 1
+    fi
+fi
+
+echo ""
+echo ">>> [04] Gerenciamento de AD concluído! Método: ${JOIN_METHOD:-$ESTADO}"
 echo "============================================================="
