@@ -853,7 +853,7 @@ function handleGenerateBundle($input) {
     $skipExportNames = ['ADMIN_USERNAME', 'INSTALL_DESKTOP'];
     $imageVars = ['WALLPAPER_URL', 'LOGO_URL', 'WALLPAPER_LOGIN_URL', 'GREETER_URL'];
     $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '');
-    // If accessed via IP, use SEEDER_SERVER FQDN instead
+    // Always use SEEDER_SERVER FQDN for URLs in the bundle
     $seederServerRow = Database::fetchOne(
         "SELECT ov.value FROM organization_variables ov
          JOIN variable_definitions vd ON vd.id = ov.variable_id
@@ -861,7 +861,7 @@ function handleGenerateBundle($input) {
         [$orgId]
     );
     $seederServer = $seederServerRow['value'] ?? '';
-    if ($seederServer && preg_match('/^\d+\.\d+\.\d+\.\d+/', $baseUrl)) {
+    if ($seederServer) {
         $baseUrl = rtrim($seederServer, '/');
     }
     $bundle .= "# === VARIAVEIS ===\n";
@@ -869,6 +869,7 @@ function handleGenerateBundle($input) {
         if (in_array($v['type'], $skipExportTypes, true)) continue;
         if (in_array($v['name'], $skipExportNames, true)) continue;
         $varValue = $v['value'] ?? '';
+        // Prefix relative paths with SEEDER_SERVER for image/branding URLs
         if (in_array($v['name'], $imageVars, true) && !empty($varValue) && strpos($varValue, 'http') !== 0) {
             $varValue = $baseUrl . '/' . ltrim($varValue, '/');
         }
@@ -904,8 +905,10 @@ function handleGenerateBundle($input) {
     foreach ($scripts as $s) {
         $rawContent = getScriptContent((int)$s['id'], $orgId);
         $scriptContent = substituir_placeholders($rawContent, $orgId);
-        $scriptContent = str_replace('__ADMIN_PASSWORD_B64__', $adminPwdEncoded ?: '', $scriptContent);
-        $scriptContent = str_replace('__VNC_PASSWORD_B64__', $vncPwdEncoded ?: '', $scriptContent);
+        $scriptContent = str_replace('__ADMIN_PASSWORD_B64__', $adminPwdEncoded, $scriptContent);
+        $scriptContent = str_replace('__VNC_PASSWORD_B64__', $vncPwdEncoded, $scriptContent);
+        // Clean up any remaining __*__ placeholders that weren't resolved
+        $scriptContent = preg_replace('/__[A-Z_]+__/', '', $scriptContent);
         $bundle .= "# --- {$s['name']} ({$s['filename']}) ---\n";
         $bundle .= $scriptContent . "\n\n";
         $scriptIds[] = $s['id'];
@@ -1836,13 +1839,13 @@ function handleResetScriptOrder() {
         'core_config.sh'           => 13,
         'core_branding.sh'         => 14,
         'core_logon.sh'            => 15,
+        'core_password_change.sh'  => 16,
         'core_logoff.sh'           => 17,
         'core_session_lightdm.sh'  => 18,
         'core_session_gdm3.sh'     => 19,
         'core_session_sddm.sh'     => 20,
         'core_agent.sh'            => 21,
         'core_proxy.sh'            => 22,
-        'core_password_change.sh'  => 16,
     ];
 
     Database::beginTransaction();

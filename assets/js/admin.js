@@ -1123,8 +1123,8 @@ function renderTypedInput(v) {
         if (v.name === 'SEEDER_SERVER') note = '<div class="var-hint" style="font-size:0.8em;color:var(--text-muted);margin-top:4px">Configure este FQDN no DNS ou adicione ao /etc/hosts das estacoes.</div>';
         return `<input type="url" data-var-id="${varId}" value="${Utils.escapeHtml(val)}" class="var-input"${ph}>${note}`;
     }
-    if (v.type === 'ip' || v.name.includes('IP') || v.name.includes('DNS')) {
-        return `<input type="text" data-var-id="${varId}" value="${Utils.escapeHtml(val)}" class="var-input font-mono">`;
+    if (v.type === 'ip' || v.name.includes('IP') || v.name.includes('DNS') || v.name === 'NTP_SERVER') {
+        return `<input type="text" data-var-id="${varId}" value="${Utils.escapeHtml(val)}" class="var-input font-mono" placeholder="IP ou hostname (ex: 10.108.64.51)" pattern="^([a-zA-Z0-9.-]+)$" title="Apenas IP ou hostname. Nao use URLs (http://).">`;
     }
     if (v.type === 'password') {
         const isB64Pwd = v.name === 'ADMIN_PASSWORD_B64' || v.name === 'VNC_PASSWORD_B64';
